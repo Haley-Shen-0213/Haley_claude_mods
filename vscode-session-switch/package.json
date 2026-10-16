@@ -1,0 +1,18 @@
+{
+  "name": "haley-session-switch",
+  "displayName": "Haley Session Switch",
+  "description": "配合 haley-cockpit mod：在 /session-board 點一列，就切到該 Claude／Codex session 所在的 VS Code 終端機分頁",
+  "version": "0.1.0",
+  "publisher": "haley-shen-0213",
+  "repository": { "type": "git", "url": "https://github.com/Haley-Shen-0213/Haley_claude_mods.git" },
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "extensionKind": ["ui", "workspace"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "haleySessionSwitch.showLog", "title": "Haley Session Switch：顯示切換紀錄" }
+    ]
+  }
+}

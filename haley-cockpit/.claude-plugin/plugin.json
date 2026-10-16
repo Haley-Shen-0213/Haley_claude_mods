@@ -1,0 +1,21 @@
+{
+  "name": "haley-cockpit",
+  "version": "0.1.0",
+  "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量、編輯熱點、子代理、回合時間軸、git worktree",
+  "author": { "name": "Haley-Shen-0213", "url": "https://github.com/Haley-Shen-0213" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "stallMinutes": {
+      "type": "number",
+      "title": "停滯門檻（分鐘）",
+      "description": "執行中的 session 超過這麼久沒有新紀錄就標為停滯；狀態列與 /session-board 共用",
+      "default": 10
+    },
+    "python": {
+      "type": "string",
+      "title": "Python 指令",
+      "description": "執行 collector\\cockpit_cli.py 用的 Python（3.10 以上）；不在 PATH 上時填完整路徑",
+      "default": "python"
+    }
+  }
+}

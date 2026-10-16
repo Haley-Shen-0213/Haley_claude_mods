@@ -1,0 +1,12 @@
+{
+  "name": "haley-claude-mods",
+  "description": "Haley 自製的 Claude Code mods（非官方）",
+  "owner": { "name": "Haley-Shen-0213", "url": "https://github.com/Haley-Shen-0213" },
+  "plugins": [
+    {
+      "name": "haley-cockpit",
+      "source": "./haley-cockpit",
+      "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量、編輯熱點、子代理、回合時間軸、git worktree"
+    }
+  ]
+}
