@@ -6,7 +6,7 @@
     {
       "name": "haley-cockpit",
       "source": "./haley-cockpit",
-      "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量、編輯熱點、子代理、回合時間軸、git worktree"
+      "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量（含 Fable 額度）、依編號快速切換 session、子代理與工作流程、編輯熱點、回合時間軸、git worktree、專案檔案樹"
     }
   ]
 }

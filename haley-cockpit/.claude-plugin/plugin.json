@@ -1,7 +1,7 @@
 {
   "name": "haley-cockpit",
-  "version": "0.1.0",
-  "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量、編輯熱點、子代理、回合時間軸、git worktree",
+  "version": "0.2.0",
+  "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量（含 Fable 額度）、依編號快速切換 session、子代理與工作流程、編輯熱點、回合時間軸、git worktree、專案檔案樹",
   "author": { "name": "Haley-Shen-0213", "url": "https://github.com/Haley-Shen-0213" },
   "license": "MIT",
   "repository": "https://github.com/Haley-Shen-0213/Haley_claude_mods",
