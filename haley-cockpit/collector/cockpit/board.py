@@ -4,10 +4,9 @@ import glob
 import os
 import time
 
-from . import claude_sessions, codex_sessions, common, usage
+from . import claude_sessions, codex_sessions, common, usage, usage_fetch
 from .winproc import Processes
 
-STATE_ORDER = {"stalled": 0, "running": 1, "unknown": 2, "idle": 3}
 TERMINALS_FRESH = 120  # 秒：VS Code 擴充每 30 秒重寫一次，超過這個時間的檔案視為視窗已關閉
 
 
@@ -57,6 +56,27 @@ def attach_claude_ctx(rows):
             r["ctx"] = {"pct": doc.get("pct"), "at": doc.get("at")}
 
 
+def tab_titles(r):
+    """終端機分頁可能顯示的名稱，給切換程式比對。Claude：標題（還沒有任何對話時沒有標題，分頁固定叫 Claude Code）；
+    Codex：thread 名稱，分頁上可能後面再接「 | 專案」。"""
+    title = (r.get("title") or "").strip()
+    if r.get("tool") == "codex":
+        return [t for t in (title, f"{title} | {r.get('project') or ''}".strip(" |") if title else "") if t]
+    if title and title != (r.get("slug") or ""):
+        return [title]
+    return ["Claude Code"]
+
+
+def number_rows(rows):
+    """編號依 session 啟動時間排（同時啟動時依程序編號），固定不變：/go 編號、狀態列清單、各面板用同一套號碼，
+    不會因為狀態改變而跳號；有 session 結束時，排在它後面的編號才會往前補。就地排序並回傳同一個清單。"""
+    rows.sort(key=lambda r: (r.get("startedAt") or 0, r["pid"]))
+    for no, r in enumerate(rows, 1):
+        r["no"] = no
+        r["tabTitles"] = tab_titles(r)
+    return rows
+
+
 def split_non_terminal(rows):
     """登記檔的 entrypoint 不是 cli 的 session（例如 VS Code 的 Claude 面板在背景開的）不在任何終端機裡，
     點了也切不過去：不列進總覽、不算進 session 數，另外回傳給需要的介面。"""
@@ -66,8 +86,10 @@ def split_non_terminal(rows):
     return keep, others
 
 
-def collect(detail=False, stall_override=None, with_sparks=False):
+def collect(detail=False, stall_override=None, with_sparks=False, refresh_usage=False):
     now_ts = common.now()
+    if refresh_usage:
+        usage_fetch.maybe_spawn(now_ts)  # 模型專屬額度太舊時，在背景重抓；這一輪先用現有快取
     stall_min = common.stall_minutes(stall_override)
     stall_s = stall_min * 60
     procs = Processes()
@@ -79,10 +101,10 @@ def collect(detail=False, stall_override=None, with_sparks=False):
     elif not (common.read_json(usage.USAGE_PATH, {}) or {}).get("codex"):
         # 沒有存活的 Codex，快取也還沒有額度時才去翻最新的 rollout（比較慢，只做一次）
         usage.record_codex(codex_sessions.newest_rate())
-    rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 2), r["tool"], r.get("project") or ""))
     attach_terminals(rows, terminal_names(now_ts))
     attach_claude_ctx(rows)
     rows, others = split_non_terminal(rows)
+    number_rows(rows)
     snap = usage.snapshot(now_ts)
     usage.append_history(snap, now_ts)
     counts = {"running": 0, "idle": 0, "stalled": 0, "unknown": 0}

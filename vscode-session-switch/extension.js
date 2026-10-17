@@ -1,6 +1,7 @@
 // 路徑： extension.js
-// Haley Cockpit 的 VS Code 端：狀態列右側顯示帳號用量；右側欄「Claude 駕駛艙」面板每個 session 一條進度條，點一下切到它的終端機；
-// 把本視窗各終端機的名稱回報給收集器（總覽因此能顯示和分頁清單一樣的名稱）；處理 /session-board 送來的切換請求。
+// Haley Cockpit 的 VS Code 端：狀態列右側顯示帳號用量（含 Fable）；右側欄「Claude 駕駛艙」面板每個 session 一條進度條，點一下切到它的終端機
+// （在 VS Code 裡的切終端機分頁，在 Windows Terminal 裡的呼叫 switch_terminal.ps1 選分頁）；
+// 把本視窗各終端機的名稱回報給收集器（總覽因此能顯示和分頁清單一樣的名稱）；處理 /session-board 與 /go 送來的切換請求。
 'use strict'
 const vscode = require('vscode')
 const crypto = require('crypto')
@@ -138,7 +139,7 @@ function refreshNow() {
 
 function item(id, priority, name) {
   if (!items[id]) {
-    // 靠右對齊時，優先順序越低越靠右；四個項目排在一起，依序是 5h、7d、Codex、session
+    // 靠右對齊時，優先順序越低越靠右；排在一起，依序是 5h、7d、模型專屬額度（Fable 等）、Codex、session
     const it = vscode.window.createStatusBarItem(`haleyCockpit.${id}`, vscode.StatusBarAlignment.Right, priority)
     it.name = name
     it.command = 'haleyCockpit.open'
@@ -153,7 +154,7 @@ function updateStatusBar() {
   const usage = latest ? latest.usage : null
   const tip = new vscode.MarkdownString(lastError && !latest ? `讀取失敗：${lastError}` : lib.usageTooltip(usage, now, loadedAt))
   const list = usage ? lib.usageItems(usage, now) : []
-  const order = { c5: -101, c7: -102, x1: -103 }
+  const order = { c5: -101, c7: -102, m0: -103, m1: -104, x1: -105 }
   for (const id of Object.keys(order)) {
     const it = item(id, order[id], `Haley Cockpit：${id === 'x1' ? 'Codex' : 'Claude'} 用量`)
     const u = list.find(x => x.id === id)
@@ -166,7 +167,7 @@ function updateStatusBar() {
     it.tooltip = tip
     it.show()
   }
-  const s = item('sessions', -104, 'Haley Cockpit：session 狀態')
+  const s = item('sessions', -106, 'Haley Cockpit：session 狀態')
   if (!show || !latest) {
     if (show && lastError) {
       s.text = '$(warning) 駕駛艙讀取失敗'
@@ -213,10 +214,38 @@ async function showByPids(pids) {
   return null
 }
 
-/** 面板裡點一列：本視窗有就直接切；沒有就寫切換請求，交給擁有那個終端機的其他視窗。 */
+/** 開在 Windows Terminal 的 session：把脈絡寫成檔交給 switch_terminal.ps1（UI Automation 選分頁並把視窗帶到前景），結果顯示在狀態列訊息。 */
+async function switchViaTerminal(row) {
+  const cli = lib.findCollector(config().get('collectorPath') || '')
+  if (!cli) {
+    void vscode.window.showWarningMessage('找不到收集程式，無法切換到 Windows Terminal：請在設定「haleyCockpit.collectorPath」填入完整路徑')
+    return
+  }
+  const script = path.join(path.dirname(cli), 'switch_terminal.ps1')
+  // 每個 VS Code 視窗各用自己的脈絡檔，同時點擊不會互相覆蓋
+  const ctxFile = path.join(DIR, `switch-context-vscode-${process.pid}.json`)
+  try {
+    writeJsonAtomic(ctxFile, lib.buildSwitchContext(row, (latest && latest.sessions) || []))
+    const out = await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-ContextFile', ctxFile])
+    const result = JSON.parse(out.trim().split(/\r?\n/).pop() || '{}')
+    const text = lib.describeTerminal(result)
+    log.appendLine(`${stamp()} Windows Terminal：${text}`)
+    if (result.ok) vscode.window.setStatusBarMessage(text, 5000)
+    else void vscode.window.showWarningMessage(text)
+  } catch (err) {
+    log.appendLine(`${stamp()} Windows Terminal 切換失敗：${err.message || err}`)
+    void vscode.window.showWarningMessage(`切換到 Windows Terminal 失敗：${err.message || err}`)
+  }
+}
+
+/** 面板裡點一列：開在 Windows Terminal 的交給切換程式；本視窗有終端機就直接切；都沒有就寫切換請求，交給擁有那個終端機的其他視窗。 */
 async function switchTo(key) {
   const row = ((latest && latest.sessions) || []).find(r => lib.rowKey(r) === key)
   if (!row) return
+  if (lib.isTerminalHost(row)) {
+    await switchViaTerminal(row)
+    return
+  }
   const term = await showByPids(row.pids)
   if (term) {
     log.appendLine(`${stamp()} 面板切換到「${term.name}」`)

@@ -5,11 +5,11 @@ import glob
 import os
 import re
 
-from . import common
+from . import common, workflows
 
 SESSIONS_DIR = os.path.join(common.CLAUDE_DIR, "sessions")
 PROJECTS_DIR = os.path.join(common.CLAUDE_DIR, "projects")
-CACHE_VERSION = 2  # 2：快取多存最後一次請求的 token 數（算 context 比例），舊快取重新解析一次
+CACHE_VERSION = 3  # 2：多存最後一次請求的 token 數（算 context 比例）；3：多存 ai-title（標題）；版本變了舊快取會重新解析一次
 # 斜線指令與本機指令的輸出也以 user 列寫入，但不是使用者開的新回合
 LOCAL_PREFIX = ("<command-name>", "<local-command-stdout>", "<local-command-caveat>",
                 "<command-message>", "<local-command-stderr>")
@@ -111,6 +111,7 @@ def tail_state(path):
     last_ts = None
     pending = {}
     last_err = False
+    ai_title = None
     for raw in lines:
         if _heavy(raw):
             continue
@@ -121,7 +122,10 @@ def tail_state(path):
         if ts and (last_ts is None or ts > last_ts):
             last_ts = ts
         kind = o.get("type")
-        if kind == "assistant":
+        if kind == "ai-title":
+            # Claude Code 依對話內容自動產生的標題（終端機分頁上看到的就是它）；沒有時間戳，檔案裡越後面越新
+            ai_title = o.get("aiTitle") or ai_title
+        elif kind == "assistant":
             last_err = bool(o.get("isApiErrorMessage"))
             for b in _content(o) or []:
                 if isinstance(b, dict) and b.get("type") == "tool_use":
@@ -134,7 +138,17 @@ def tail_state(path):
                 for b in c:
                     if isinstance(b, dict) and b.get("type") == "tool_result":
                         pending.pop(b.get("tool_use_id"), None)
-    return {"lastTs": last_ts, "pendingTools": sorted({n for n in pending.values() if n}), "lastError": last_err}
+    return {"lastTs": last_ts, "pendingTools": sorted({n for n in pending.values() if n}), "lastError": last_err,
+            "aiTitle": ai_title}
+
+
+def display_title(s, ai_title):
+    """session 的標題。登記檔的 name 若是自動產生的代號（nameSource＝derived，例如 myproject-8e）就不是標題：
+    使用者用 /rename 取的名字（nameSource 不是 derived）優先，其次是 Claude 產生的 ai-title，最後才退回登記檔的 name。"""
+    name = s.get("name") or ""
+    if name and s.get("nameSource") not in (None, "derived"):
+        return name
+    return ai_title or name
 
 
 # ---- 全檔增量解析（給 mod 的面板用） ----
@@ -142,7 +156,7 @@ def tail_state(path):
 def _new_state(path):
     return {"v": CACHE_VERSION, "path": path, "offset": 0, "turns": [], "req": None, "pending": {},
             "edits": {}, "todos": None, "tasks": {}, "taskCreates": {}, "planStart": None, "planKind": None,
-            "lastTs": None, "lastErr": False, "ctxTokens": None}
+            "lastTs": None, "lastErr": False, "ctxTokens": None, "aiTitle": None}
 
 
 def _close_request(st):
@@ -181,6 +195,9 @@ def _feed(st, o):
     # 壓縮（/compact）之後，到下一次 API 回應之前，不知道 context 用了多少：先清掉，不要沿用壓縮前那一次的數字
     if o.get("isCompactSummary") or (kind == "system" and o.get("subtype") == "compact_boundary"):
         st["ctxTokens"] = None
+    if kind == "ai-title":
+        st["aiTitle"] = o.get("aiTitle") or st.get("aiTitle")
+        return
     if kind == "user":
         if is_turn_start(o):
             _close_request(st)
@@ -357,7 +374,7 @@ def collect(procs, now_ts, stall_s, detail=False):
             continue
         sid = s["sessionId"]
         path = transcript_path(s)
-        tail = tail_state(path) if path else {"lastTs": None, "pendingTools": [], "lastError": False}
+        tail = tail_state(path) if path else {"lastTs": None, "pendingTools": [], "lastError": False, "aiTitle": None}
         since = (s.get("statusUpdatedAt") or s.get("updatedAt") or 0) / 1000 or None
         # 狀態切換時間也算一次動作：找不到紀錄檔，或紀錄檔還沒寫入新回合時，至少有它
         stamps = [t for t in (tail["lastTs"], since) if t]
@@ -370,8 +387,14 @@ def collect(procs, now_ts, stall_s, detail=False):
         else:
             state = str(raw)
         pid = int(s["pid"])
-        row = {"tool": "claude", "id": sid, "pid": pid, "pids": procs.chain(pid), "cwd": s.get("cwd"),
-               "project": common.project_name(s.get("cwd")), "title": s.get("name") or "", "state": state,
+        chain = procs.chain(pid)
+        ai_title = tail.get("aiTitle")
+        if not ai_title:
+            # 檔尾剛好沒有標題列（例如剛跑完一長串工具輸出）時，退回增量解析快取裡記的最後一個標題
+            ai_title = (common.read_json(os.path.join(common.CACHE_DIR, f"claude-{sid}.json")) or {}).get("aiTitle")
+        row = {"tool": "claude", "id": sid, "pid": pid, "pids": chain, "host": procs.host(chain), "cwd": s.get("cwd"),
+               "project": common.project_name(s.get("cwd")), "title": display_title(s, ai_title),
+               "slug": s.get("name") or "", "state": state,
                "rawStatus": raw, "since": since, "lastActivity": last, "pendingTools": tail["pendingTools"],
                "lastError": tail["lastError"], "startedAt": (s.get("startedAt") or 0) / 1000 or None,
                "version": s.get("version"), "transcript": path,
@@ -387,6 +410,8 @@ def collect(procs, now_ts, stall_s, detail=False):
                 cur = turn_rows({**st, "turns": turns[-1:]}, state in ("running", "stalled"), now_ts)[0]
                 row["turn"] = {"startedAt": cur["start"], "calls": cur["calls"], "outputTokens": cur["outputTokens"],
                                "tools": cur["tools"], "seconds": cur["seconds"]}
+            # 工作流程（Workflow 工具）：沒有待辦清單的 session，總覽的進度條改用「已完成代理數／總代理數」
+            row["workflow"] = workflows.row_summary(workflows.collect_session(path, now_ts, stall_s, limit=2))
         rows.append(row)
     return rows
 

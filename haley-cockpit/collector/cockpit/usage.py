@@ -31,8 +31,9 @@ def record_claude(rate_limits):
         except (TypeError, ValueError):
             continue
         old = claude.get(kind)
-        newer_window = old is None or new["resetsAt"] > old.get("resetsAt", 0) + 60
-        same_window = old is not None and abs(new["resetsAt"] - old.get("resetsAt", 0)) <= 60
+        # 官方 /usage 的重置時間只精確到分鐘、狀態列給的是整點秒數，所以兩分鐘內都算同一個視窗
+        newer_window = old is None or new["resetsAt"] > old.get("resetsAt", 0) + 120
+        same_window = old is not None and abs(new["resetsAt"] - old.get("resetsAt", 0)) <= 120
         if newer_window or (same_window and new["used"] > old.get("used", 0)):
             claude[kind] = {**new, "seenAt": common.now()}
             changed = True
@@ -55,6 +56,31 @@ def record_session_ctx(data):
     old = common.read_json(path) or {}
     if any(old.get(k) != v for k, v in new.items()):
         common.write_json_atomic(path, {**new, "at": common.now()})
+
+
+def record_usage_text(parsed, now_ts):
+    """官方 /usage 的解析結果（見 usage_fetch.py）：模型專屬額度寫進 claudeUsage；
+    5 小時與 7 天是伺服器現在的數字，比各 session 最近一次回應時的值新，一併併入原本的合併規則。"""
+    store = common.read_json(USAGE_PATH, {}) or {}
+    cu = store.get("claudeUsage") or {}
+    cu.update({"seenAt": now_ts, "models": parsed.get("models") or {}})
+    store["claudeUsage"] = cu
+    common.write_json_atomic(USAGE_PATH, store)
+    windows = {}
+    for kind in CLAUDE_WINDOWS:
+        w = parsed.get(kind)
+        if w and w.get("resetsAt"):
+            windows[kind] = {"used_percentage": w["used"], "resets_at": w["resetsAt"]}
+    record_claude(windows)
+
+
+def mark_usage_try(now_ts):
+    """記下最近一次嘗試重抓的時間：抓失敗時也要等一個間隔才重試，不會每次狀態列更新都去敲一次。"""
+    store = common.read_json(USAGE_PATH, {}) or {}
+    cu = store.get("claudeUsage") or {}
+    cu["tryAt"] = now_ts
+    store["claudeUsage"] = cu
+    common.write_json_atomic(USAGE_PATH, store)
 
 
 def record_codex(found):
@@ -88,6 +114,13 @@ def snapshot(now_ts):
             reset = w.get("resetsAt") or 0
             out["claude"][kind] = {"used": None if reset and reset < now_ts else w.get("used"), "resetsAt": reset,
                                    "seenAt": w.get("seenAt")}
+    # 模型專屬的每週額度（例如 Fable），來自官方 /usage 的背景查詢；還沒查過就是空清單
+    cu = store.get("claudeUsage") or {}
+    out["claude"]["models"] = []
+    for label, w in (cu.get("models") or {}).items():
+        reset = w.get("resetsAt") or 0
+        out["claude"]["models"].append({"label": label, "used": None if reset and reset < now_ts else w.get("used"),
+                                        "resetsAt": reset, "seenAt": cu.get("seenAt")})
     codex = store.get("codex")
     if codex and isinstance(codex.get("rate"), dict):
         rate = codex["rate"]

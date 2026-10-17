@@ -109,3 +109,14 @@ class Processes:
     def find(self, exe_name):
         name = exe_name.lower()
         return [pid for pid, (_, exe) in self.table.items() if exe.lower() == name]
+
+    def host(self, chain):
+        """session 在哪種終端機裡：vscode＝VS Code 的整合終端機；wt＝程序鏈上看得到 Windows Terminal；
+        console＝其他（例如從開始功能表開的 cmd：Windows Terminal 為預設終端機時，cmd 的父程序是 explorer，鏈上看不到它，
+        所以這一類要靠視窗與分頁名稱去對應）。"""
+        names = {(self.exe(p) or "").lower() for p in chain}
+        if "code.exe" in names:
+            return "vscode"
+        if names & {"windowsterminal.exe", "openconsole.exe"}:
+            return "wt"
+        return "console"

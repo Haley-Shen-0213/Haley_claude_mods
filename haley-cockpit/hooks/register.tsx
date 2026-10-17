@@ -1,11 +1,12 @@
 // 路徑： hooks\register.tsx
-// haley-cockpit 駕駛艙：/session-board、/edit-heatmap、/agent-board、/turn-timeline、/worktree-map 五個面板，同一個 mod 共用讀取程式與設定。
+// haley-cockpit 駕駛艙：/session-board、/edit-heatmap、/agent-board、/turn-timeline、/worktree-map、/file-tree 六個面板，
+// /cockpit 一次開啟全部，/go 依編號或名稱切到某個 session；同一個 mod 共用讀取程式與設定。
 // session 紀錄檔交給 collector\cockpit_cli.py 解析：mod 的環境一次只能讀 4 MiB，紀錄檔動輒十幾 MB；狀態列也用同一份 Python 程式，兩邊數字一致。
+// 子代理與工作流程的面板在 agents.tsx，檔案樹在 filetree.tsx；共用的排版與呼叫收集程式的函式在 helpers.ts。
 import { atom, read, update } from 'claude-code'
-import type { AgentInfo, AgentStatus, Color, EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
+import type { Color, PluginOptions, Register, Timer } from 'claude-code'
 
 import type {
-  CockpitAgentTime,
   CockpitBoard,
   CockpitEdits,
   CockpitLoad,
@@ -15,195 +16,41 @@ import type {
   CockpitWorktree,
   CockpitWorktrees,
 } from '../types'
-
-type Dollar = EngineInterface
+import { noteAgentEnd, refreshAgents, registerAgents } from './agents'
+import { refreshTree, registerTree } from './filetree'
+import {
+  EMPTY, ago, bar, clockText, cockpitDir, count, fetchOnce, fit, level, merge, right, runCli, shortPath, span, spark, stallMinutes, toolName,
+} from './helpers'
+import type { Dollar } from './helpers'
 
 const BOARD_MS = 5000 // session 總覽每 5 秒更新
-const AGENT_MS = 2000
+const AGENT_MS = 3000
+const TREE_MS = 10000
 const SLOW_MS = 30000 // 編輯熱點、回合時間軸：解析是增量的，但沒必要更頻繁
-const CLI_TIMEOUT_MS = 60000 // 第一次解析十幾 MB 的紀錄檔要一兩秒，留足餘裕
 const ACK_TRIES = 8
 
 const PANES = {
   board: { id: 'session-board', title: 'Session 總覽' },
+  agents: { id: 'agent-board', title: '代理與工作流程' },
   edits: { id: 'edit-heatmap', title: '編輯熱點' },
-  agents: { id: 'agent-board', title: '子代理' },
   turns: { id: 'turn-timeline', title: '回合時間軸' },
   worktrees: { id: 'worktree-map', title: 'Worktree' },
+  tree: { id: 'file-tree', title: '專案檔案樹' },
 } as const
 type PaneKey = keyof typeof PANES
 
-const EMPTY = { data: null, error: null, loadedAt: null }
 const boardState = atom({ plugin: 'haley-cockpit', key: 'board' } as const, EMPTY as CockpitLoad<CockpitBoard>)
 const editsState = atom({ plugin: 'haley-cockpit', key: 'edits' } as const, EMPTY as CockpitLoad<CockpitEdits>)
 const editsAll = atom({ plugin: 'haley-cockpit', key: 'editsAll' } as const, false)
 const turnsState = atom({ plugin: 'haley-cockpit', key: 'turns' } as const, EMPTY as CockpitLoad<CockpitTurns>)
 const worktreeState = atom({ plugin: 'haley-cockpit', key: 'worktrees' } as const, EMPTY as CockpitLoad<CockpitWorktrees>)
-const agentTimes = atom({ plugin: 'haley-cockpit', key: 'agentTimes' } as const, {} as Record<string, CockpitAgentTime>)
 const noticeState = atom({ plugin: 'haley-cockpit', key: 'notice' } as const, null as string | null)
 
 // 模組變數在熱重載時會清空（計時器也一併被引擎取消），所以 session.start 會依引擎記錄中仍開著的面板補回
 const timers = new Map<PaneKey, Timer>()
-const inFlight = new Set<string>()
+const inFlightTree = new Set<string>()
 
-// ---- 文字排版：終端機是等寬字型，中文佔兩格，欄位要依顯示寬度補空白 ----
-
-function charWidth(code: number): number {
-  if (code < 0x1100) return 1
-  const wide =
-    (code <= 0x115f) ||
-    (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
-    (code >= 0xac00 && code <= 0xd7a3) ||
-    (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0xfe30 && code <= 0xfe4f) ||
-    (code >= 0xff00 && code <= 0xff60) ||
-    (code >= 0xffe0 && code <= 0xffe6) ||
-    (code >= 0x1f300 && code <= 0x1f64f) ||
-    (code >= 0x1f900 && code <= 0x1f9ff) ||
-    (code >= 0x20000 && code <= 0x3fffd)
-  return wide ? 2 : 1
-}
-
-function width(text: string): number {
-  let w = 0
-  for (const ch of text) w += charWidth(ch.codePointAt(0) ?? 0)
-  return w
-}
-
-/** 截斷（結尾加 …）並補空白到剛好 w 格。 */
-function fit(text: string, w: number): string {
-  if (w <= 0) return ''
-  const now = width(text)
-  if (now <= w) return text + ' '.repeat(w - now)
-  let out = ''
-  let used = 0
-  for (const ch of text) {
-    const cw = charWidth(ch.codePointAt(0) ?? 0)
-    if (used + cw > w - 1) break
-    out += ch
-    used += cw
-  }
-  return out + '…' + ' '.repeat(Math.max(0, w - used - 1))
-}
-
-function right(text: string, w: number): string {
-  const now = width(text)
-  return now >= w ? text : ' '.repeat(w - now) + text
-}
-
-function pad2(n: number): string {
-  return n < 10 ? `0${n}` : String(n)
-}
-
-function span(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds))
-  if (s < 60) return `${s}秒`
-  if (s < 3600) return `${Math.floor(s / 60)}分${pad2(s % 60)}秒`
-  if (s < 86400) return `${Math.floor(s / 3600)}時${pad2(Math.floor((s % 3600) / 60))}分`
-  return `${Math.floor(s / 86400)}天${Math.floor((s % 86400) / 3600)}時`
-}
-
-function ago(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds))
-  if (s < 60) return `${s} 秒前`
-  if (s < 3600) return `${Math.floor(s / 60)} 分前`
-  if (s < 86400) return `${Math.floor(s / 3600)} 時前`
-  return `${Math.floor(s / 86400)} 天前`
-}
-
-/** 時間由 Python 端給時區偏移：mod 的環境不保證知道本機時區。 */
-function clockText(epoch: number, tz: number): string {
-  const d = new Date((epoch + tz) * 1000)
-  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`
-}
-
-function count(n: number): string {
-  if (n >= 10000) return `${(n / 10000).toFixed(1)}萬`
-  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-}
-
-const PARTS = '▏▎▍▌▋▊▉'
-
-/** 以 1/8 格為單位的進度條，回傳［已用, 未用］兩段，方便分開上色。 */
-function bar(pct: number, w: number): [string, string] {
-  const p = Math.max(0, Math.min(100, pct))
-  const eighths = Math.round((p / 100) * w * 8)
-  const full = Math.floor(eighths / 8)
-  const part = eighths % 8
-  const filled = '█'.repeat(full) + (part ? (PARTS[part - 1] ?? '') : '')
-  return [filled, '░'.repeat(Math.max(0, w - full - (part ? 1 : 0)))]
-}
-
-// 配色門檻（與狀態列相同）：低於 50% 綠、50～80% 黃、超過 80% 紅
-function level(pct: number): Color {
-  return pct < 50 ? 'success' : pct <= 80 ? 'warning' : 'error'
-}
-
-const SPARK = '▁▂▃▄▅▆▇█'
-
-function spark(values: readonly (number | null)[]): string {
-  return values.map(v => (v === null ? ' ' : (SPARK[Math.min(7, Math.max(0, Math.round((v / 100) * 7)))] ?? ' '))).join('')
-}
-
-function toolName(tool: string): string {
-  return tool === 'codex' ? 'Codex' : 'Claude'
-}
-
-function shortPath(path: string, root: string, home: string): string {
-  const norm = (p: string) => p.replace(/\//g, '\\').toLowerCase()
-  const r = norm(root).replace(/\\+$/, '')
-  if (r && norm(path).startsWith(r + '\\')) return path.slice(r.length + 1)
-  const h = norm(home).replace(/\\+$/, '')
-  if (h && norm(path).startsWith(h + '\\')) return '~' + path.slice(h.length)
-  return path
-}
-
-// ---- 資料：呼叫 collector\cockpit_cli.py ----
-
-function pythonCommand(options: PluginOptions): string {
-  const v = options['python']
-  return typeof v === 'string' && v.trim() ? v.trim() : 'python'
-}
-
-async function runCli<T>($: Dollar, options: PluginOptions, args: readonly string[]): Promise<{ data: T } | { error: string }> {
-  try {
-    // -B：不寫 __pycache__；外掛資料夾可能在版控裡，也可能被引擎監看熱重載
-    const r = await $.process.run([pythonCommand(options), '-X', 'utf8', '-B', `${$.plugin.root}/collector/cockpit_cli.py`, ...args], {
-      timeoutMs: CLI_TIMEOUT_MS,
-    })
-    if (r.exitCode !== 0) {
-      const last = r.stderr.trim().split(/\r?\n/).slice(-1)[0] ?? ''
-      return { error: `cockpit_cli.py 結束碼 ${r.exitCode}：${last}` }
-    }
-    return { data: JSON.parse(r.stdout) as T }
-  } catch (err) {
-    return { error: `無法執行 python：${err instanceof Error ? err.message : String(err)}` }
-  }
-}
-
-type CliResult<T> = { data: T } | { error: string }
-
-/** 上一次還沒回來就回傳 null 跳過這一輪，避免慢的時候呼叫越疊越多。 */
-async function fetchOnce<T>(key: string, work: () => Promise<CliResult<T>>): Promise<CliResult<T> | null> {
-  if (inFlight.has(key)) return null
-  inFlight.add(key)
-  try {
-    return await work()
-  } finally {
-    inFlight.delete(key)
-  }
-}
-
-/** 成功就換上新資料並清掉錯誤；失敗保留上一次的資料，只記錯誤。
- * 呼叫端各自寫 update($, <atom 常數>, …)：引擎載入前會靜態掃描 update 的對象，參數傳進來的 atom 掃不到。 */
-function merge<T>(r: CliResult<T>, at: number): (v: CockpitLoad<T>) => CockpitLoad<T> {
-  return v => ('data' in r ? { data: r.data, error: null, loadedAt: at } : { ...v, error: r.error })
-}
-
-function stallMinutes(options: PluginOptions): number {
-  const v = options['stallMinutes']
-  return typeof v === 'number' && v > 0 ? v : 10
-}
+// ---- 資料 ----
 
 /** 本 session 最近一次 API 回應的 Claude 用量，換成狀態列 stdin 的格式交給收集器合併；沒裝狀態列時面板也有數字。 */
 async function claudeRate($: Dollar): Promise<string | null> {
@@ -273,8 +120,8 @@ function parseWorktrees(text: string, cwd: string): CockpitWorktree[] {
 }
 
 async function refreshWorktrees($: Dollar): Promise<void> {
-  if (inFlight.has('worktrees')) return
-  inFlight.add('worktrees')
+  if (inFlightTree.has('worktrees')) return
+  inFlightTree.add('worktrees')
   try {
     const cwd = await $.session.cwd()
     let result: { data: CockpitWorktrees } | { error: string }
@@ -289,26 +136,12 @@ async function refreshWorktrees($: Dollar): Promise<void> {
     const at = await $.clock.now()
     await update($, worktreeState, v => ('data' in result ? { data: result.data, error: null, loadedAt: at } : { ...v, error: result.error }))
   } finally {
-    inFlight.delete('worktrees')
+    inFlightTree.delete('worktrees')
   }
 }
 
-// ---- 點一列切換終端機：交給同 repo 的 VS Code 擴充 haley-session-switch ----
-
-async function cockpitDir($: Dollar): Promise<string> {
-  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? ''
-  return `${home}/.claude/haley-cockpit`
-}
-
-async function requestSwitch($: Dollar, s: CockpitSession): Promise<void> {
-  const dir = await cockpitDir($)
-  const at = await $.clock.now()
-  const id = `${at.toString(36)}-${s.pid}`
-  // 交換檔：每個 VS Code 視窗的擴充都監看它，擁有這串 pid 中某個終端機程序的視窗負責切換並回寫 switch-ack.json
-  await $.fs.write(`${dir}/switch-request.json`, JSON.stringify({ id, at, pids: s.pids, tool: s.tool, project: s.project }))
-  await update($, noticeState, () => `切換中：${s.project}（${toolName(s.tool)}）…`)
-  waitAck($, dir, id, 0)
-}
+// ---- 切換到某個 session ----
+// 在 VS Code 終端機裡的交給 VS Code 擴充（寫切換請求）；在 Windows Terminal 或其他終端機的，用 UI Automation 選分頁（collector\switch_terminal.ps1）。
 
 type SwitchAck = { id?: string; ok?: boolean; terminal?: string; reason?: string }
 
@@ -336,6 +169,76 @@ function waitAck($: Dollar, dir: string, id: string, tries: number): void {
   })
 }
 
+async function sendVsCodeRequest($: Dollar, s: CockpitSession): Promise<void> {
+  const dir = await cockpitDir($)
+  const at = await $.clock.now()
+  const id = `${at.toString(36)}-${s.pid}`
+  // 交換檔：每個 VS Code 視窗的擴充都監看它，擁有這串 pid 中某個終端機程序的視窗負責切換並回寫 switch-ack.json
+  await $.fs.write(`${dir}/switch-request.json`, JSON.stringify({ id, at, pids: s.pids, tool: s.tool, project: s.project }))
+  waitAck($, dir, id, 0)
+}
+
+type TerminalResult = {
+  ok: boolean
+  how?: string
+  ambiguous?: boolean
+  tab?: string
+  foreground?: boolean | null
+  error?: string
+  message?: string
+  tabs?: string[]
+}
+
+function describeTerminal(r: TerminalResult): string {
+  if (r.ok) {
+    const how =
+      r.how === 'elimination' ? '（分頁被改過名，依排除法推定）' :
+      r.how === 'order' ? '（依啟動順序推定，可能不準）' :
+      r.ambiguous ? '（有多個同名分頁，選了第一個）' : ''
+    const fg = r.foreground === false ? '；視窗沒能自動帶到最前面，請手動切到 Windows Terminal' : ''
+    return `已切換到分頁「${(r.tab ?? '').trim()}」${how}${fg}`
+  }
+  if (r.error === 'no_wt_window') return '找不到 Windows Terminal 視窗：這個 session 可能開在別種終端機（例如舊式的命令提示字元視窗），目前無法切換'
+  if (r.error === 'no_match') {
+    const names = (r.tabs ?? []).map(t => `「${t.trim()}」`).join('、')
+    return `找不到對應的分頁。目前的分頁：${names}。分頁名稱若被你改過，清空名稱就會恢復成自動標題`
+  }
+  return `切換失敗：${r.message ?? r.error ?? '原因不明'}`
+}
+
+async function switchViaTerminal($: Dollar, s: CockpitSession, all: readonly CockpitSession[]): Promise<string> {
+  const dir = await cockpitDir($)
+  // 排除法只該把確定開在 Windows Terminal／主控台的其他 session 算進去；VS Code 裡的或位置不明的會讓推定錯位
+  const others = all.filter(o => o.pid !== s.pid && (o.host === 'wt' || o.host === 'console'))
+  const ctx = {
+    target: { titles: s.tabTitles ?? [s.title], pids: s.pids, startedAt: s.startedAt ?? 0 },
+    others: others.map(o => ({ titles: o.tabTitles ?? [o.title], pids: o.pids, startedAt: o.startedAt ?? 0 })),
+  }
+  // 脈絡寫成檔案交給切換程式：標題含中文與各種符號，走命令列會被引號與編碼弄壞
+  const ctxPath = `${dir}/switch-context.json`
+  await $.fs.write(ctxPath, JSON.stringify(ctx))
+  try {
+    const r = await $.process.run(
+      ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `${$.plugin.root}/collector/switch_terminal.ps1`, '-ContextFile', ctxPath],
+      { timeoutMs: 30000 },
+    )
+    const line = r.stdout.trim().split(/\r?\n/).pop() ?? ''
+    return describeTerminal(JSON.parse(line) as TerminalResult)
+  } catch (err) {
+    return `切換失敗：${err instanceof Error ? err.message : String(err)}`
+  }
+}
+
+async function switchToSession($: Dollar, target: CockpitSession, all: readonly CockpitSession[]): Promise<string> {
+  const self = await $.session.id()
+  if (target.tool === 'claude' && target.id === self) return '這就是目前的 session'
+  const name = target.terminal || target.title || target.project
+  // 只有確定不在 VS Code 的（Windows Terminal 或其他主控台）才走分頁切換；沒標示的一律交給 VS Code 擴充
+  if (target.host === 'wt' || target.host === 'console') return switchViaTerminal($, target, all)
+  await sendVsCodeRequest($, target)
+  return `已請 VS Code 切換到「${name}」`
+}
+
 // ---- 面板與計時器 ----
 
 function keyOf(id: string): PaneKey | null {
@@ -354,15 +257,19 @@ function startFor($: Dollar, key: PaneKey, options: PluginOptions): Promise<void
   if (key === 'board') return schedule($, key, BOARD_MS, () => refreshBoard($, options))
   if (key === 'edits') return schedule($, key, SLOW_MS, () => refreshEdits($, options))
   if (key === 'turns') return schedule($, key, SLOW_MS, () => refreshTurns($, options))
-  if (key === 'agents') return schedule($, key, AGENT_MS, () => $.ui.invalidate('ui.render'))
+  // 子代理清單的「已執行時間」每次重畫才會走動，所以資料沒變也要定期重畫
+  if (key === 'agents') return schedule($, key, AGENT_MS, async () => { await refreshAgents($, options); $.ui.invalidate('ui.render') })
+  if (key === 'tree') return schedule($, key, TREE_MS, () => refreshTree($))
   return refreshWorktrees($)
 }
 
-async function openPane($: Dollar, key: PaneKey, options: PluginOptions): Promise<string> {
+async function openPane($: Dollar, key: PaneKey, options: PluginOptions): Promise<{ placed: boolean; text: string }> {
   const pane = PANES[key]
   const opened = await $.ui.open({ id: pane.id, title: pane.title })
   await startFor($, key, options)
-  return opened.isPlaced ? `已開啟「${pane.title}」面板。` : `「${pane.title}」面板已開啟，等待版面空間：${opened.reason}`
+  return opened.isPlaced
+    ? { placed: true, text: `已開啟「${pane.title}」面板。` }
+    : { placed: false, text: `「${pane.title}」面板已開啟，等待版面空間：${opened.reason}` }
 }
 
 // ---- 畫面 ----
@@ -382,11 +289,24 @@ function windowLabel(minutes: number | null | undefined): string {
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'session-board', description: '所有 Claude／Codex session 的狀態、進度與帳號用量（每 5 秒更新；點一列切到該終端機）', immediate: true })
-    await $.command.register({ name: 'edit-heatmap', description: '本 session 各檔案被 Edit／Write 成功修改的次數（從紀錄檔重建）', immediate: true })
-    await $.command.register({ name: 'agent-board', description: '本 session 的子代理：類型、任務、狀態、已執行時間；點一列檢視它的對話', immediate: true })
-    await $.command.register({ name: 'turn-timeline', description: '本 session 每回合的耗時、輸出 token、API 呼叫與工具次數', immediate: true })
-    await $.command.register({ name: 'worktree-map', description: '目前 repo 的 git worktree：路徑、分支、鎖定狀態', immediate: true })
+    // 逐個登記並各自攔錯：萬一某個名稱和內建指令撞名而被拒絕，不能連累其他指令與整個 session.start
+    const commands: { name: string; description: string; argumentHint?: string }[] = [
+      { name: 'cockpit', description: '一次開啟全部駕駛艙面板（Session 總覽、代理、編輯熱點、回合時間軸、Worktree、專案檔案樹）；加 close 全部關閉', argumentHint: '[close]' },
+      { name: 'go', description: '依編號或名稱切到某個 session 的終端機；不帶參數時列出編號', argumentHint: '[編號或名稱]' },
+      { name: 'session-board', description: '所有 Claude／Codex session 的狀態、進度與帳號用量（每 5 秒更新；點一列切到該終端機）' },
+      { name: 'agent-board', description: '本 session 的子代理與工作流程派出的代理：階段、描述、狀態、已執行時間' },
+      { name: 'edit-heatmap', description: '本 session 各檔案被 Edit／Write 成功修改的次數（從紀錄檔重建）' },
+      { name: 'turn-timeline', description: '本 session 每回合的耗時、輸出 token、API 呼叫與工具次數' },
+      { name: 'worktree-map', description: '目前 repo 的 git worktree：路徑、分支、鎖定狀態' },
+      { name: 'file-tree', description: '專案檔案樹：展開資料夾、點一下複製路徑（絕對或相對）' },
+    ]
+    for (const c of commands) {
+      try {
+        await $.command.register({ ...c, immediate: true })
+      } catch (err) {
+        $.ui.log(`haley-cockpit：登記 /${c.name} 失敗：${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
+      }
+    }
     for (const pane of await $.ui.panes()) {
       const key = keyOf(pane.id)
       if (key) void startFor($, key, options)
@@ -394,11 +314,56 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'session-board' }, async $ => ({ text: await openPane($, 'board', options) }))
-  on('command.run', { command: 'edit-heatmap' }, async $ => ({ text: await openPane($, 'edits', options) }))
-  on('command.run', { command: 'agent-board' }, async $ => ({ text: await openPane($, 'agents', options) }))
-  on('command.run', { command: 'turn-timeline' }, async $ => ({ text: await openPane($, 'turns', options) }))
-  on('command.run', { command: 'worktree-map' }, async $ => ({ text: await openPane($, 'worktrees', options) }))
+  const single: [string, PaneKey][] = [
+    ['session-board', 'board'], ['agent-board', 'agents'], ['edit-heatmap', 'edits'],
+    ['turn-timeline', 'turns'], ['worktree-map', 'worktrees'], ['file-tree', 'tree'],
+  ]
+  for (const [command, key] of single) {
+    on('command.run', { command }, async $ => ({ text: (await openPane($, key, options)).text }))
+  }
+
+  on('command.run', { command: 'cockpit' }, async ($, e) => {
+    const keys = Object.keys(PANES) as PaneKey[]
+    if (/^(close|關閉)$/i.test(e.args.trim())) {
+      for (const key of keys) {
+        await $.ui.close({ id: PANES[key].id })
+        timers.get(key)?.cancel()
+        timers.delete(key)
+      }
+      return { text: '已關閉全部駕駛艙面板。' }
+    }
+    const results = await Promise.all(keys.map(key => openPane($, key, options)))
+    const waiting = results.filter(r => !r.placed).length
+    return {
+      text:
+        `已開啟 ${keys.length} 個面板：${keys.map(k => PANES[k].title).join('、')}。` +
+        (waiting ? `\n其中 ${waiting} 個還在等版面空間（終端機太窄，放寬視窗後會自動出現）。` : '') +
+        '\n面板上方的分頁可以切換；/cockpit close 一次關閉全部。',
+    }
+  })
+
+  on('command.run', { command: 'go' }, async ($, e) => {
+    const r = await runCli<CockpitBoard>($, options, ['board', '--stall-minutes', String(stallMinutes(options))])
+    if (!('data' in r)) return { text: `讀取 session 清單失敗：${r.error}` }
+    const rows = r.data.sessions
+    const dot: Record<string, string> = { running: '●', stalled: '▲', idle: '○' }
+    const label = (s: CockpitSession) => `${s.no}. ${dot[s.state] ?? '?'} ${s.terminal || s.title || s.project}（${toolName(s.tool)}，${s.project}）`
+    const listing = rows.map(label).join('\n')
+    const arg = e.args.trim()
+    if (!arg) return { text: `用法：/go 編號或名稱（編號與狀態列、面板相同）\n${listing}` }
+    let target: CockpitSession | undefined
+    if (/^\d+$/.test(arg)) {
+      target = rows.find(s => s.no === Number(arg))
+      if (!target) return { text: `沒有編號 ${arg}。\n${listing}` }
+    } else {
+      const q = arg.toLowerCase()
+      const hits = rows.filter(s => [s.terminal, s.title, s.project].some(t => (t ?? '').toLowerCase().includes(q)))
+      if (hits.length === 0) return { text: `找不到符合「${arg}」的 session。\n${listing}` }
+      if (hits.length > 1) return { text: `「${arg}」符合多個，請改用編號：\n${hits.map(label).join('\n')}` }
+      target = hits[0]
+    }
+    return { text: await switchToSession($, target as CockpitSession, rows) }
+  })
 
   // 只是觀察關閉、停掉自己的計時器；就算這裡出錯也一律放行關閉
   on('ui.close', ($, e, next) => {
@@ -410,28 +375,9 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // 子代理的開始與結束時間：$.agent.list() 沒有時間欄位，所以在生成與回合結束時自己記
-  on('agent.spawn', async ($, e, next) => {
-    const r = await next(e)
-    if (r.agentId) {
-      const id = r.agentId
-      const at = await $.clock.now()
-      await update($, agentTimes, m => {
-        const keep = Object.entries(m).slice(-199)
-        return { ...Object.fromEntries(keep), [id]: { startedAt: at, endedAt: null } }
-      })
-    }
-    return r
-  }).catch(($, e, next) => next(e))
-
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) {
-      const id = e.agentId
-      const at = await $.clock.now()
-      await update($, agentTimes, m => {
-        const hit = m[id]
-        return hit ? { ...m, [id]: { ...hit, endedAt: at } } : m
-      })
+      await noteAgentEnd($, e.agentId)
     } else {
       // 主對話的回合結束時，開著的時間軸與熱點順手更新，不必等 30 秒
       if (timers.has('turns')) void refreshTurns($, options)
@@ -439,6 +385,9 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   })
+
+  registerAgents(on, options)
+  registerTree(on)
 
   // ---- /session-board ----
   on('ui.render', { component: 'Pane', requestId: 'session-board' }, async ($, e) => {
@@ -487,7 +436,7 @@ export const register: Register = (on, options) => {
     // 欄寬：狀態、工具、名稱、進度、ctx、本回合、最後動作固定，任務吃剩下的；太窄時先拿掉工具、ctx 與本回合
     const hot = 3 // plain Button 前面的「1: 」
     const narrow = cols < 110
-    const W = { state: 9, tool: narrow ? 0 : 7, name: narrow ? 16 : 20, progress: 22, ctx: narrow ? 0 : 6, turn: narrow ? 0 : 10, last: 14 }
+    const W = { state: 9, tool: narrow ? 0 : 7, name: narrow ? 16 : 20, progress: 26, ctx: narrow ? 0 : 6, turn: narrow ? 0 : 10, last: 14 }
     const fixed = W.state + W.tool + W.name + W.progress + W.ctx + W.turn + W.last + hot + 1
     const taskW = Math.max(10, cols - fixed)
     const header = (
@@ -499,15 +448,23 @@ export const register: Register = (on, options) => {
     const rows = b.sessions.map((s, i) => {
       const [label, color] = STATE_LABEL[s.state] ?? [s.state, 'warning']
       const mark = s.tool === 'claude' && s.id === self ? '▶' : ' '
-      // 名稱用 VS Code 擴充回報的終端機名稱（和分頁清單一樣）；沒有時用專案資料夾名
-      const name = s.terminal || s.project
-      const task = (s.title || (s.tool === 'codex' ? '（Codex 未命名）' : '（未命名）')) + (s.plan?.current ? ` · ${s.plan.current}` : '')
-      // 每列一條迷你進度條：有待辦清單時是完成比例；沒有清單時，執行中畫成網點、其他留空
+      // 名稱：VS Code 擴充回報的終端機名稱（和分頁清單一樣）；不在 VS Code 時用 session 標題；都沒有才用專案資料夾名
+      const name = s.terminal || s.title || s.project
+      // 任務：標題與名稱不同時才再寫一次標題，後面接目前的待辦項目；兩者都沒有就寫專案資料夾名
+      const task = [s.title && s.title !== name ? s.title : '', s.plan?.current ?? ''].filter(Boolean).join(' · ') || s.project
+      // 窄版把工具縮成前綴（沿用使用者的命名習慣：CL＝Claude、CX＝Codex）
+      const tag = s.tool === 'codex' ? 'CX' : 'CL'
+      // 每列一條迷你進度條：有待辦清單時是完成比例；沒有清單但有工作流程在跑時，是代理的完成比例；都沒有時，執行中畫成網點、其他留空
+      const wf = s.workflow
+      const wfPct = wf && wf.total > 0 ? (wf.done / wf.total) * 100 : null
+      const wfEta = wf && wf.startedAt && wf.done > 0 && wf.done < wf.total ? ((now - wf.startedAt) / wf.done) * (wf.total - wf.done) : null
       const mini = s.plan && s.plan.total > 0
         ? bar((s.plan.done / s.plan.total) * 100, 6).join('')
+        : wfPct !== null ? bar(wfPct, 6).join('')
         : s.state === 'running' || s.state === 'stalled' ? '▒▒▒▒▒▒' : '░░░░░░'
       const progress = mini + ' ' + (s.plan
         ? `${s.plan.done}/${s.plan.total}` + (s.plan.eta !== null ? ` ≈${span(s.plan.eta)}` : s.plan.done >= s.plan.total ? ' 完成' : '')
+        : wf ? `代理 ${wf.done}/${wf.total}` + (wfEta !== null ? ` ≈${span(wfEta)}` : '')
         : '無計畫')
       const ctx = s.ctx && s.ctx.pct !== null ? `${Math.round(s.ctx.pct)}%` : ''
       const turn = (s.state === 'running' || s.state === 'stalled') && s.turn ? span(s.turn.seconds) : ''
@@ -516,13 +473,18 @@ export const register: Register = (on, options) => {
         ? `${s.pendingTools[0]} ${lastAgo.replace(' 前', '')}`
         : lastAgo
       const extra = s.lastError ? '!' : ' '
+      const doSwitch = () => void (async () => {
+        await update($, noticeState, () => `切換中：${name}…`)
+        const text = await switchToSession($, s, b.sessions)
+        await update($, noticeState, () => text)
+      })()
       return (
-        <Button key={`row:${s.tool}:${s.pid}`} plain {...(i < 9 ? { hotkey: String(i + 1) } : {})} onPress={() => void requestSwitch($, s)}>
+        <Button key={`row:${s.tool}:${s.pid}`} plain {...(s.no <= 9 ? { hotkey: String(s.no) } : {})} onPress={doSwitch}>
           <Text color={color}>{fit(mark + label, W.state)}</Text>
           <Text dimColor>{fit(W.tool ? toolName(s.tool) : '', W.tool)}</Text>
-          <Text>{fit((W.tool ? '' : toolName(s.tool)[0] + ' ') + name, W.name)}</Text>
-          <Text>{fit(task, taskW)}</Text>
-          <Text color={s.plan ? 'text' : s.state === 'running' ? 'success' : 'subtle'}>{fit(progress, W.progress)}</Text>
+          <Text>{fit((W.tool ? '' : tag + ' ') + name, W.name - 1) + ' '}</Text>
+          <Text>{fit(task, taskW - 1) + ' '}</Text>
+          <Text color={s.plan || wf ? 'text' : s.state === 'running' ? 'success' : 'subtle'}>{fit(progress, W.progress)}</Text>
           <Text color={s.ctx && s.ctx.pct !== null ? level(s.ctx.pct) : 'subtle'}>{fit(ctx, W.ctx)}</Text>
           <Text dimColor>{fit(turn, W.turn)}</Text>
           <Text color={s.lastError ? 'warning' : 'subtle'}>{fit(extra + last, W.last)}</Text>
@@ -535,6 +497,7 @@ export const register: Register = (on, options) => {
         <Text weight="bold">帳號用量</Text>
         {usageRow('u-c5', 'Claude 5 小時', claude.five_hour, sp?.c5, '近 5 小時')}
         {usageRow('u-c7', 'Claude 7 天', claude.seven_day, sp?.c7, '近 7 天')}
+        {(claude.models ?? []).map(m => usageRow(`u-m-${m.label}`, `${m.label} 7 天`, { used: m.used, resetsAt: m.resetsAt }))}
         {codex ? usageRow('u-x1', `Codex ${windowLabel(codex.primary?.windowMinutes)}`, codex.primary, sp?.x1, '') : null}
         {codex?.secondary ? usageRow('u-x2', `Codex ${windowLabel(codex.secondary.windowMinutes)}`, codex.secondary) : null}
         {!claude.five_hour && !claude.seven_day ? <Text dimColor>Claude 用量要等任一個 session 收到 API 回應後才有數字</Text> : null}
@@ -551,7 +514,7 @@ export const register: Register = (on, options) => {
         {rows}
         {b.sessions.length === 0 ? <Text dimColor>沒有存活的 session</Text> : null}
         <Text> </Text>
-        <Text dimColor>點一列（或按面板內的 1～9）切到該 session 的 VS Code 終端機。▶ 是本視窗；! 表示上一回合以錯誤結束。</Text>
+        <Text dimColor>點一列（或按面板內的 1～9、或輸入 /go 編號）切到該 session 的終端機。▶ 是本視窗；! 表示上一回合以錯誤結束。</Text>
         {load.error ? <Text color="warning">{`最近一次更新失敗：${load.error}`}</Text> : null}
         {notice ? <Text color="suggestion">{notice}</Text> : null}
       </Box>
@@ -607,51 +570,6 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
-      </Box>
-    )
-  })
-
-  // ---- /agent-board ----
-  on('ui.render', { component: 'Pane', requestId: 'agent-board' }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const agents: AgentInfo[] = await $.agent.list()
-    const times = await read($, agentTimes)
-    const nowMs = await $.clock.now()
-    const cols = Math.max(40, e.props.bodyColumns)
-    const viewing = e.props.view.agentId
-    const LABEL: Record<AgentStatus, [string, Color]> = {
-      pending: ['… 排隊中', 'subtle'],
-      running: ['● 執行中', 'success'],
-      waiting: ['◐ 等待中', 'warning'],
-      idle: ['○ 閒置', 'subtle'],
-      completed: ['✓ 完成', 'subtle'],
-      failed: ['✗ 失敗', 'error'],
-      killed: ['■ 已停止', 'warning'],
-    }
-    const running = agents.filter(a => a.status === 'running').length
-    const typeW = 20
-    const timeW = 12
-    const descW = Math.max(10, cols - 3 - 10 - typeW - timeW - 1)
-    return (
-      <Box flexDirection="column">
-        <Text weight="bold">{`本 session 的子代理：${agents.length} 個（執行中 ${running}）`}</Text>
-        {viewing ? <Button key="back" hotkey="0" onPress={() => void $.ui.view({})}>回到主對話</Button> : null}
-        {agents.length === 0 ? <Text dimColor>目前沒有子代理（工作流程的代理不在這份清單裡）</Text> : null}
-        {agents.map((a, i) => {
-          const [label, color] = LABEL[a.status] ?? [a.status, 'warning']
-          const t = times[a.id]
-          const elapsed = t ? span(((t.endedAt ?? (a.status === 'running' || a.status === 'waiting' ? nowMs : t.startedAt)) - t.startedAt) / 1000) : '—'
-          const mark = viewing === a.id ? '▶' : ' '
-          return (
-            <Button key={`a:${a.id}`} plain {...(i < 9 ? { hotkey: String(i + 1) } : {})} onPress={() => void $.ui.view({ agentId: a.id })}>
-              <Text color={color}>{fit(mark + label, 10)}</Text>
-              <Text dimColor>{fit(a.type, typeW)}</Text>
-              <Text>{fit(a.name ? `${a.name}：${a.description}` : a.description, descW)}</Text>
-              <Text dimColor>{right(elapsed, timeW)}</Text>
-            </Button>
-          )
-        })}
-        <Text dimColor>點一列（或按 1～9）在主畫面檢視該子代理的對話；已執行時間從本 mod 載入後開始記錄。</Text>
       </Box>
     )
   })

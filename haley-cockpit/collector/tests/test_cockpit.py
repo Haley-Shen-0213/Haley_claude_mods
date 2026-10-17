@@ -1,6 +1,8 @@
 # 路徑： collector\tests\test_cockpit.py
-# 收集程式核心計算的單元測試（標準函式庫 unittest，不需安裝套件）：context 比例、壓縮後歸零、非終端機 session 過濾、終端機名稱對應、用量合併、ISO 時間。
+# 收集程式核心計算的單元測試（標準函式庫 unittest，不需安裝套件）：context 比例、壓縮後歸零、非終端機 session 過濾、終端機名稱對應、用量合併、ISO 時間、
+# 標題與編號、Fable 用量解析、狀態列排版、工作流程代理的狀態與增量解析。
 # 用法：python -X utf8 -B -m unittest discover -s collector/tests -v（在 haley-cockpit 資料夾下執行）
+import json
 import os
 import shutil
 import sys
@@ -13,7 +15,10 @@ _DATA = tempfile.mkdtemp(prefix="haley-cockpit-test-")
 os.environ["HALEY_COCKPIT_DATA"] = _DATA
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cockpit import board, claude_sessions, codex_sessions, common, usage  # noqa: E402
+from unittest import mock  # noqa: E402
+
+import statusline  # noqa: E402
+from cockpit import board, claude_sessions, codex_sessions, common, usage, usage_fetch, winproc, workflows  # noqa: E402
 
 
 def tearDownModule():
@@ -163,6 +168,328 @@ class UsageMerge(unittest.TestCase):
         """重置時間已過的視窗，用量未知（要等下一次 API 回應）。"""
         usage.record_claude({"five_hour": {"used_percentage": 50, "resets_at": time.time() - 10}})
         self.assertIsNone(self._used())
+
+
+class Titles(unittest.TestCase):
+    def test_derived_name_is_not_a_title(self):
+        """登記檔的 name 若是自動代號（derived），標題用 Claude 產生的 ai-title。"""
+        s = {"name": "myproject-8e", "nameSource": "derived"}
+        self.assertEqual(claude_sessions.display_title(s, "整理文件"), "整理文件")
+
+    def test_derived_name_is_the_last_resort(self):
+        """還沒有 ai-title（剛開、沒有對話）時，退回登記檔的名稱。"""
+        s = {"name": "myproject-8e", "nameSource": "derived"}
+        self.assertEqual(claude_sessions.display_title(s, None), "myproject-8e")
+
+    def test_custom_name_wins(self):
+        """使用者用 /rename 取的名字（nameSource 不是 derived）優先於 ai-title。"""
+        s = {"name": "我的專案", "nameSource": "user"}
+        self.assertEqual(claude_sessions.display_title(s, "整理文件"), "我的專案")
+
+    def test_tail_takes_last_ai_title(self):
+        """檔尾有好幾個 ai-title 時取最後一個（標題會隨對話更新）。"""
+        path = os.path.join(_DATA, "t.jsonl")
+        rows = [{"type": "ai-title", "aiTitle": "舊標題"},
+                {"type": "assistant", "timestamp": "2026-10-17T00:00:00Z", "message": {"content": []}},
+                {"type": "ai-title", "aiTitle": "新標題"}]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+        self.assertEqual(claude_sessions.tail_state(path)["aiTitle"], "新標題")
+
+    def test_incremental_state_keeps_ai_title(self):
+        """增量解析也記住最新的 ai-title，檔尾剛好沒有標題列時有備用。"""
+        st = claude_sessions._new_state("x")
+        claude_sessions._feed(st, {"type": "ai-title", "aiTitle": "A"})
+        claude_sessions._feed(st, {"type": "ai-title", "aiTitle": "B"})
+        self.assertEqual(st["aiTitle"], "B")
+
+
+class Host(unittest.TestCase):
+    def _procs(self, table):
+        p = winproc.Processes.__new__(winproc.Processes)
+        p.table = table
+        p._created = {}
+        return p
+
+    def test_host_kinds(self):
+        """依程序鏈判斷 session 在哪種終端機裡。"""
+        procs = self._procs({1: (2, "claude.exe"), 2: (3, "powershell.exe"), 3: (4, "Code.exe"),
+                             11: (12, "claude.exe"), 12: (13, "OpenConsole.exe"), 13: (0, "WindowsTerminal.exe"),
+                             21: (22, "claude.exe"), 22: (23, "cmd.exe"), 23: (0, "explorer.exe")})
+        self.assertEqual(procs.host([1, 2, 3]), "vscode")
+        self.assertEqual(procs.host([11, 12, 13]), "wt")
+        self.assertEqual(procs.host([21, 22, 23]), "console")
+
+
+USAGE_SAMPLE = """You are currently using your subscription to power your Claude Code usage
+
+Current session: 11% used · resets Oct 17, 10:59am (Asia/Taipei)
+Current week (all models): 45% used · resets Oct 22, 5:59am (Asia/Taipei)
+Current week (Fable): 36% used · resets Oct 22, 6am (Asia/Taipei)
+
+What's contributing to your limits usage?
+"""
+
+
+class ModelUsage(unittest.TestCase):
+    def setUp(self):
+        for p in (usage.USAGE_PATH, usage_fetch.LOCK_PATH):
+            if os.path.exists(p):
+                os.remove(p)
+
+    def test_parse_official_usage_text(self):
+        """session＝5 小時、week (all models)＝7 天、week (某模型)＝該模型自己的每週額度。"""
+        now = time.mktime((2026, 10, 17, 9, 0, 0, 0, 0, -1))
+        p = usage_fetch.parse_usage_text(USAGE_SAMPLE, now)
+        self.assertEqual(p["five_hour"]["used"], 11.0)
+        self.assertEqual(p["seven_day"]["used"], 45.0)
+        self.assertEqual(p["models"]["Fable"]["used"], 36.0)
+        self.assertEqual(time.strftime("%m-%d %H:%M", time.localtime(p["five_hour"]["resetsAt"])), "10-17 10:59")
+        self.assertEqual(time.strftime("%m-%d %H:%M", time.localtime(p["models"]["Fable"]["resetsAt"])), "10-22 06:00")
+
+    def test_other_models_and_missing_reset(self):
+        """之後出現別的模型專屬額度、或沒有重置時間時，照樣解析。"""
+        p = usage_fetch.parse_usage_text("Current week (Opus): 12.5% used\nCurrent week (Fable): 3% used", time.time())
+        self.assertEqual(p["models"]["Opus"]["used"], 12.5)
+        self.assertIsNone(p["models"]["Opus"]["resetsAt"])
+        self.assertEqual(p["models"]["Fable"]["used"], 3.0)
+        self.assertEqual(usage_fetch.parse_usage_text("沒有可解析的內容", time.time()), {"five_hour": None, "seven_day": None, "models": {}})
+
+    def test_reset_rolls_into_next_year(self):
+        """年底查到明年一月的重置時間，要算成明年。"""
+        now = time.mktime((2026, 12, 30, 9, 0, 0, 0, 0, -1))
+        epoch = usage_fetch.parse_reset("Jan 3, 6am", now)
+        self.assertEqual(time.strftime("%Y-%m-%d %H:%M", time.localtime(epoch)), "2027-01-03 06:00")
+
+    def test_refresh_interval_and_failed_try(self):
+        """快取新就不重抓；超過 5 分鐘才重抓；嘗試失敗（只有 tryAt）也要等一個間隔。"""
+        now = 1_000_000.0
+        self.assertTrue(usage_fetch.due(now))
+        common.write_json_atomic(usage.USAGE_PATH, {"claudeUsage": {"seenAt": now - 60}})
+        self.assertFalse(usage_fetch.due(now))
+        common.write_json_atomic(usage.USAGE_PATH, {"claudeUsage": {"seenAt": now - 900, "tryAt": now - 100}})
+        self.assertFalse(usage_fetch.due(now))
+        common.write_json_atomic(usage.USAGE_PATH, {"claudeUsage": {"seenAt": now - 900, "tryAt": now - 400}})
+        self.assertTrue(usage_fetch.due(now))
+
+    def test_spawn_only_when_due_and_not_locked(self):
+        """到期才在背景啟動；鎖檔還新（另一個程序正在抓）就不再啟動。"""
+        now = common.now()
+        with mock.patch.object(usage_fetch.subprocess, "Popen") as popen:
+            common.write_json_atomic(usage.USAGE_PATH, {"claudeUsage": {"seenAt": now - 10}})
+            self.assertFalse(usage_fetch.maybe_spawn(now))
+            os.remove(usage.USAGE_PATH)
+            self.assertTrue(usage_fetch.maybe_spawn(now))
+            self.assertEqual(popen.call_count, 1)
+            self.assertIn("usage-refresh", popen.call_args.args[0])
+            with open(usage_fetch.LOCK_PATH, "w", encoding="utf-8") as f:
+                f.write("x")
+            self.assertFalse(usage_fetch.maybe_spawn(now))
+            self.assertEqual(popen.call_count, 1)
+
+    def test_record_and_snapshot(self):
+        """寫入後快照要有模型額度；重置時間已過的視窗用量未知。"""
+        now = time.time()
+        usage.record_usage_text({"five_hour": None, "seven_day": {"used": 45.0, "resetsAt": now + 86400},
+                                 "models": {"Fable": {"used": 36.0, "resetsAt": now + 86400}, "Old": {"used": 9.0, "resetsAt": now - 10}}}, now)
+        snap = usage.snapshot(now)
+        models = {m["label"]: m for m in snap["claude"]["models"]}
+        self.assertEqual(models["Fable"]["used"], 36.0)
+        self.assertIsNone(models["Old"]["used"])
+        self.assertEqual(snap["claude"]["seven_day"]["used"], 45.0)
+
+
+class Numbering(unittest.TestCase):
+    def test_stable_order_by_start_time(self):
+        """編號依啟動時間排，與狀態無關；同時啟動時依程序編號。"""
+        rows = [{"pid": 3, "startedAt": 300, "tool": "claude", "title": "丙", "slug": "", "state": "running"},
+                {"pid": 1, "startedAt": 100, "tool": "codex", "title": "甲", "project": "p", "state": "idle"},
+                {"pid": 2, "startedAt": 100, "tool": "claude", "title": "乙", "slug": "", "state": "idle"}]
+        board.number_rows(rows)
+        self.assertEqual([(r["no"], r["pid"]) for r in rows], [(1, 1), (2, 2), (3, 3)])
+
+    def test_tab_title_candidates(self):
+        """切換程式比對用的分頁名稱：有標題用標題；新 session 沒有標題時分頁固定叫 Claude Code；Codex 可能接「 | 專案」。"""
+        self.assertEqual(board.tab_titles({"tool": "claude", "title": "整理文件", "slug": "p-8e"}), ["整理文件"])
+        self.assertEqual(board.tab_titles({"tool": "claude", "title": "p-8e", "slug": "p-8e"}), ["Claude Code"])
+        self.assertEqual(board.tab_titles({"tool": "codex", "title": "審查", "project": "alpha"}), ["審查", "審查 | alpha"])
+
+
+class StatusLine(unittest.TestCase):
+    ROWS = [{"no": i + 1, "id": f"s{i}", "state": st, "terminal": name}
+            for i, (st, name) in enumerate([("running", "整理文件與設定的長名稱"), ("idle", "甲專案 交易所"), ("idle", "乙專案 流量監控"),
+                                            ("stalled", "新 session"), ("idle", "系統診斷"), ("idle", "中控台"), ("idle", "Codex 審查"), ("idle", "Codex 規範")])]
+
+    def test_list_numbers_names_and_current(self):
+        """每格「編號:狀態點 名稱」，本 session 加粗，寬度放得下時 8 個都列出。"""
+        text = statusline.line_list(self.ROWS, "s1", 200)
+        plain = statusline._ANSI.sub("", text)
+        self.assertTrue(plain.startswith("1:● "))
+        self.assertIn("4:▲ ", plain)
+        self.assertIn("8:○ ", plain)
+        self.assertLessEqual(statusline.visible_width(text), 200)
+        self.assertIn(statusline.BOLD, text)
+
+    def test_list_collapses_when_narrow(self):
+        """太窄時只列放得下的前幾個，其餘收成 +N，而且不超過寬度。"""
+        text = statusline.line_list(self.ROWS, "s0", 60)
+        self.assertLessEqual(statusline.visible_width(text), 60)
+        self.assertRegex(statusline._ANSI.sub("", text), r"\+\d+$")
+
+    def test_usage_line_fits_any_width(self):
+        """帳號用量行（含 Fable）依寬度挑放得下的版本。"""
+        now = 1_000_000.0
+        snap = {"claude": {"five_hour": {"used": 11.0, "resetsAt": now + 7000}, "seven_day": {"used": 45.0, "resetsAt": now + 400000},
+                           "models": [{"label": "Fable", "used": 36.0, "resetsAt": now + 400000}]},
+                "codex": {"primary": {"used": 35.0, "resetsAt": now + 500000, "windowMinutes": 10080}, "secondary": None}}
+        for cols in (220, 160, 130, 100):
+            text = statusline.line_usage(snap, now, cols)
+            self.assertLessEqual(statusline.visible_width(text), cols, cols)
+            self.assertIn("Fable 7d", text)
+        self.assertIn("後重置", statusline.line_usage(snap, now, 220))
+
+
+def _jl(path, rows, mode="a"):
+    with open(path, mode, encoding="utf-8", newline="\n") as f:
+        for o in rows:
+            f.write(json.dumps(o, ensure_ascii=False) + "\n")
+
+
+def _iso(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
+def wf_assistant(ts, rid, out, tool=None, stop="tool_use"):
+    content = [{"type": "tool_use", "name": tool}] if tool else [{"type": "text", "text": "好"}]
+    return {"type": "assistant", "timestamp": _iso(ts), "requestId": rid,
+            "message": {"id": rid, "stop_reason": stop, "usage": {"output_tokens": out}, "content": content}}
+
+
+def wf_user(ts, ends=False):
+    o = {"type": "user", "timestamp": _iso(ts), "message": {"content": "x"}}
+    if ends:
+        o["toolEndsTurn"] = True
+    return o
+
+
+class Workflows(unittest.TestCase):
+    NOW = 1_800_000_000.0
+
+    def setUp(self):
+        os.makedirs(common.CACHE_DIR, exist_ok=True)
+        self.root = tempfile.mkdtemp(prefix="wf-")
+        self.parent = os.path.join(self.root, "sess-1.jsonl")
+        self.run_id = "wf-test-" + self._testMethodName
+        self.base = os.path.join(self.root, "sess-1", "subagents", "workflows")
+        self.run_dir = os.path.join(self.base, self.run_id)
+        os.makedirs(self.run_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+        for rid in (self.run_id, "wf-old"):
+            try:
+                os.remove(os.path.join(common.CACHE_DIR, f"wf-{rid}.json"))
+            except OSError:
+                pass
+
+    def _agent(self, aid, desc, phase, rows=None, mtime=None, run_dir=None):
+        d = run_dir or self.run_dir
+        meta = os.path.join(d, f"agent-{aid}.meta.json")
+        with open(meta, "w", encoding="utf-8") as f:
+            json.dump({"agentType": "general-purpose", "description": desc, "workflowPhase": phase}, f, ensure_ascii=False)
+        if rows is not None:
+            _jl(os.path.join(d, f"agent-{aid}.jsonl"), rows, "w")
+        if mtime is not None:
+            # run 之間的新舊看檔案修改時間，測試要自己控制，不能讓它跟著真實時間走
+            for name in os.listdir(d):
+                os.utime(os.path.join(d, name), (mtime, mtime))
+
+    def _scan(self, now=None, stall=600):
+        return workflows.scan_run(self.run_dir, self.parent, now or self.NOW, stall)
+
+    def test_agent_states(self):
+        """結束回合的工具結果＝完成；最近有動靜＝執行中；太久沒動靜＝停滯；還沒開始寫紀錄＝待開始；依開始時間排、未開始的在最後。"""
+        n = self.NOW
+        self._agent("d", "做完的", "盤點", [wf_user(n - 500), wf_assistant(n - 480, "r1", 40, "Read"), wf_user(n - 470, ends=True)])
+        self._agent("r", "進行中的", "盤點", [wf_user(n - 100), wf_assistant(n - 20, "r2", 30, "Grep")])
+        self._agent("s", "卡住的", "彙整", [wf_user(n - 4000), wf_assistant(n - 3900, "r3", 5, "Bash")])
+        self._agent("p", "還沒開始的", "彙整")
+        for name, age in (("agent-d.jsonl", 470), ("agent-r.jsonl", 20), ("agent-s.jsonl", 3900)):
+            os.utime(os.path.join(self.run_dir, name), (n - age, n - age))
+        run = self._scan()
+        by = {a["id"]: a for a in run["agents"]}
+        self.assertEqual({k: v["state"] for k, v in by.items()}, {"d": "done", "r": "running", "s": "stalled", "p": "pending"})
+        self.assertEqual(run["counts"], {"done": 1, "running": 1, "stalled": 1, "pending": 1})
+        self.assertEqual((run["total"], run["state"]), (4, "running"))
+        self.assertEqual([a["id"] for a in run["agents"]], ["s", "d", "r", "p"])
+        self.assertAlmostEqual(by["d"]["seconds"], 30, delta=1)
+        self.assertAlmostEqual(by["r"]["seconds"], 100, delta=1)
+        self.assertEqual((by["d"]["tools"], by["d"]["lastTool"], by["d"]["outputTokens"]), (1, "Read", 40))
+        self.assertEqual(by["r"]["phase"], "盤點")
+        self.assertEqual(by["p"]["seconds"], 0)
+
+    def test_all_done_run_has_end_time_and_no_row_summary(self):
+        """全部完成的 run 狀態是 done、有結束時間；總覽每列的進度只看還沒跑完的 run。"""
+        n = self.NOW
+        self._agent("a", "甲", "盤點", [wf_user(n - 300), wf_user(n - 200, ends=True)], mtime=n - 200)
+        run = self._scan()
+        self.assertEqual(run["state"], "done")
+        self.assertAlmostEqual(run["endedAt"], n - 200, delta=1)
+        self.assertIsNone(workflows.row_summary([run]))
+
+    def test_launch_name_and_summary_come_from_parent_transcript(self):
+        """名稱與說明在母 session 紀錄檔的 Workflow 工具結果裡。"""
+        n = self.NOW
+        _jl(self.parent, [{"type": "user", "message": {"content": "x"}},
+                          {"type": "user", "toolUseResult": {"runId": self.run_id, "workflowName": "audit-demo", "summary": "稽核示範", "taskId": "wf-9"}}], "w")
+        self._agent("a", "甲", "盤點", [wf_user(n - 10), wf_assistant(n - 5, "r1", 1)], mtime=n - 5)
+        run = self._scan()
+        self.assertEqual((run["name"], run["summary"], run["taskId"]), ("audit-demo", "稽核示範", "wf-9"))
+
+    def test_launch_is_retried_after_a_minute(self):
+        """工作流程剛開始時母紀錄檔還沒有啟動結果：先用 run 編號當名稱，隔一分鐘以上再翻一次。"""
+        n = self.NOW
+        _jl(self.parent, [{"type": "user", "message": {"content": "x"}}], "w")
+        self._agent("a", "甲", "盤點", [wf_user(n - 10), wf_assistant(n - 5, "r1", 1)], mtime=n - 5)
+        self.assertEqual(self._scan(n)["name"], self.run_id)
+        _jl(self.parent, [{"type": "user", "toolUseResult": {"runId": self.run_id, "workflowName": "late-name", "summary": "", "taskId": "t"}}])
+        self.assertEqual(self._scan(n + 10)["name"], self.run_id)
+        self.assertEqual(self._scan(n + 61)["name"], "late-name")
+
+    def test_output_tokens_deduplicated_and_parsing_incremental(self):
+        """同一個請求拆成多列只算一次；紀錄檔追加後只讀新增的部分；寫到一半的列補完整才算。"""
+        n = self.NOW
+        self._agent("a", "甲", "盤點", [wf_user(n - 60), wf_assistant(n - 50, "r1", 5, "Read"), wf_assistant(n - 49, "r1", 12)], mtime=n - 49)
+        first = self._scan(n)["agents"][0]
+        self.assertEqual((first["outputTokens"], first["tools"]), (12, 1))
+        p = os.path.join(self.run_dir, "agent-a.jsonl")
+        _jl(p, [wf_assistant(n - 30, "r2", 7, "Grep")])
+        second = self._scan(n)["agents"][0]
+        self.assertEqual((second["outputTokens"], second["tools"], second["lastTool"]), (19, 2, "Grep"))
+        full = json.dumps(wf_assistant(n - 10, "r3", 100, "Edit"), ensure_ascii=False)
+        with open(p, "a", encoding="utf-8", newline="\n") as f:
+            f.write(full[:30])
+        self.assertEqual(self._scan(n)["agents"][0]["outputTokens"], 19)
+        with open(p, "a", encoding="utf-8", newline="\n") as f:
+            f.write(full[30:] + "\n")
+        third = self._scan(n)["agents"][0]
+        self.assertEqual((third["outputTokens"], third["tools"], third["lastTool"]), (119, 3, "Edit"))
+
+    def test_collect_session_newest_first_and_row_summary(self):
+        """一個 session 的多個 run 新的在前；總覽進度取最新一個還沒跑完的；沒有工作流程資料夾回傳空清單。"""
+        n = self.NOW
+        old_dir = os.path.join(self.base, "wf-old")
+        os.makedirs(old_dir)
+        self._agent("x", "舊的", "盤點", [wf_user(n - 9000), wf_user(n - 8000, ends=True)], mtime=n - 8000, run_dir=old_dir)
+        self._agent("a", "新的", "盤點", [wf_user(n - 100), wf_assistant(n - 20, "r1", 3, "Read")], mtime=n - 20)
+        runs = workflows.collect_session(self.parent, n, 600)
+        self.assertEqual([r["runId"] for r in runs], [self.run_id, "wf-old"])
+        s = workflows.row_summary(runs)
+        self.assertEqual((s["name"], s["done"], s["total"], s["running"]), (self.run_id, 0, 1, 1))
+        self.assertIsNone(workflows.row_summary(runs[1:]))
+        self.assertEqual(len(workflows.collect_session(self.parent, n, 600, limit=1)), 1)
+        self.assertEqual(workflows.collect_session(os.path.join(self.root, "none.jsonl"), n, 600), [])
+        self.assertEqual(workflows.collect_session(None, n, 600), [])
 
 
 class IsoTime(unittest.TestCase):

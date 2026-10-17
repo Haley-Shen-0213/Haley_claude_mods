@@ -5,7 +5,7 @@ import argparse
 import json
 import sys
 
-from cockpit import board, claude_sessions, common, usage
+from cockpit import board, claude_sessions, common, usage, usage_fetch, workflows
 from cockpit.winproc import Processes
 
 
@@ -52,9 +52,22 @@ def cmd_turns(args):
     return {"now": common.now(), "tzOffset": board.tz_offset(), "turns": claude_sessions.turn_rows(st, busy, common.now())}
 
 
+def cmd_agents(args):
+    """這個 session 的工作流程（Workflow 工具）與它們派出的代理：官方的子代理清單不含這些。"""
+    found = _session_paths(args.session, False)
+    if not found:
+        return {"now": common.now(), "tzOffset": board.tz_offset(), "runs": [], "error": "找不到這個 session 的紀錄檔"}
+    stall_s = common.stall_minutes(args.stall_minutes) * 60
+    now_ts = common.now()
+    return {"now": now_ts, "tzOffset": board.tz_offset(), "runs": workflows.collect_session(found[0][2], now_ts, stall_s)}
+
+
 def main():
     ap = argparse.ArgumentParser(description="haley-cockpit 資料收集")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    a = sub.add_parser("agents", help="工作流程與它們派出的代理")
+    a.add_argument("--session", action="append", required=True)
+    a.add_argument("--stall-minutes")
     b = sub.add_parser("board", help="所有 session 總覽與帳號用量")
     b.add_argument("--stall-minutes")
     b.add_argument("--claude-rate", help="mod 從 $.session.usage() 取得的 Claude 用量（狀態列 stdin 的 rate_limits 格式）")
@@ -63,16 +76,22 @@ def main():
     e.add_argument("--all", action="store_true", help="所有存活的 Claude session")
     t = sub.add_parser("turns", help="回合時間軸")
     t.add_argument("--session", action="append", required=True)
+    sub.add_parser("usage-refresh", help="背景重抓各模型的額度（執行官方 /usage 並解析；一般由總覽自動觸發）")
     args = ap.parse_args()
+    if args.cmd == "usage-refresh":
+        usage_fetch.run_refresh()
+        return
     if args.cmd == "board":
         if args.claude_rate:
             try:
                 usage.record_claude(json.loads(args.claude_rate))
             except ValueError:
                 pass
-        result = board.collect(detail=True, stall_override=args.stall_minutes, with_sparks=True)
+        result = board.collect(detail=True, stall_override=args.stall_minutes, with_sparks=True, refresh_usage=True)
     elif args.cmd == "edits":
         result = cmd_edits(args)
+    elif args.cmd == "agents":
+        result = cmd_agents(args)
     else:
         result = cmd_turns(args)
     sys.stdout.reconfigure(encoding="utf-8")

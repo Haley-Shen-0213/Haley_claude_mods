@@ -88,6 +88,8 @@ function usageItems(usage, now) {
   const claude = (usage && usage.claude) || {}
   add('c5', 'Claude 5h', claude.five_hour)
   add('c7', '7d', claude.seven_day)
+  // 模型專屬的每週額度（例如 Fable，取自官方 /usage）：狀態列位置有限，最多顯示兩個
+  ;(claude.models || []).slice(0, 2).forEach((m, i) => add(`m${i}`, `${m.label} 7d`, m))
   const codex = usage && usage.codex
   if (codex && codex.primary) add('x1', `Codex ${codex.primary.windowMinutes === 10080 ? '7d' : codex.primary.windowMinutes === 300 ? '5h' : ''}`.trim(), codex.primary)
   for (const it of items) {
@@ -108,6 +110,7 @@ function usageTooltip(usage, now, loadedAt) {
   }
   line('Claude 5 小時', claude.five_hour)
   line('Claude 7 天', claude.seven_day)
+  for (const m of claude.models || []) line(`${m.label} 7 天`, m)
   const codex = usage && usage.codex
   if (codex && codex.primary) line(`Codex ${windowLabel(codex.primary.windowMinutes)}`, codex.primary)
   if (codex && codex.secondary) line(`Codex ${windowLabel(codex.secondary.windowMinutes)}`, codex.secondary)
@@ -127,13 +130,47 @@ function rowKey(row) {
   return `${row.tool}:${row.pid}`
 }
 
-/** 每個 session 一條主進度條：有待辦清單時是完成比例；沒有清單時，執行中畫成流動條、停滯畫成紅色、閒置留空。 */
-function progressOf(row) {
+/** session 開在 Windows Terminal 或其他主控台（不是 VS Code 整合終端機）：切換要靠 switch_terminal.ps1 選分頁。 */
+function isTerminalHost(row) {
+  return row.host === 'wt' || row.host === 'console'
+}
+
+/** 交給 switch_terminal.ps1 的脈絡：目標 session 的分頁名稱候選，以及同在 Windows Terminal 的其他 session（排除法用：
+ * 分頁被使用者改過名時，其他 session 都對上了，剩下的唯一分頁就是目標）。 */
+function buildSwitchContext(row, rows) {
+  const info = r => ({ titles: r.tabTitles && r.tabTitles.length ? r.tabTitles : [r.title || ''], pids: r.pids || [], startedAt: r.startedAt || 0 })
+  return { target: info(row), others: rows.filter(r => r !== row && r.pid !== row.pid && isTerminalHost(r)).map(info) }
+}
+
+/** switch_terminal.ps1 印出的最後一行 JSON 換成給人看的中文（和 mod 的 /go 同一套說法）。 */
+function describeTerminal(r) {
+  if (r.ok) {
+    const how = r.how === 'elimination' ? '（分頁被改過名，依排除法推定）' : r.how === 'order' ? '（依啟動順序推定，可能不準）' : r.ambiguous ? '（有多個同名分頁，選了第一個）' : ''
+    const fg = r.foreground === false ? '；視窗沒能自動帶到最前面，請手動切到 Windows Terminal' : ''
+    return `已切換到分頁「${String(r.tab || '').trim()}」${how}${fg}`
+  }
+  if (r.error === 'no_wt_window') return '找不到 Windows Terminal 視窗：這個 session 可能開在別種終端機（例如舊式的命令提示字元視窗），目前無法切換'
+  if (r.error === 'no_match') {
+    const names = (r.tabs || []).map(t => `「${String(t).trim()}」`).join('、')
+    return `找不到對應的分頁。目前的分頁：${names}。分頁名稱若被你改過，清空名稱就會恢復成自動標題`
+  }
+  return `切換失敗：${r.message || r.error || '原因不明'}`
+}
+
+/** 每個 session 一條主進度條：有待辦清單時是完成比例；沒有清單但有工作流程（Workflow 工具）在跑時是代理的完成比例；
+ * 都沒有時，執行中畫成流動條、停滯畫成紅色、閒置留空。 */
+function progressOf(row, now) {
   const plan = row.plan
   if (plan && plan.total > 0) {
     const pct = (plan.done / plan.total) * 100
     const eta = plan.eta !== null && plan.eta !== undefined ? ` · 約 ${span(plan.eta)}` : plan.done >= plan.total ? ' · 完成' : ''
     return { kind: 'plan', pct, text: `${plan.done}/${plan.total}${eta}` }
+  }
+  const wf = row.workflow
+  if (wf && wf.total > 0) {
+    const remaining = now && wf.startedAt && wf.done > 0 && wf.done < wf.total ? ((now - wf.startedAt) / wf.done) * (wf.total - wf.done) : null
+    const eta = remaining !== null ? ` · 約 ${span(remaining)}` : wf.done >= wf.total ? ' · 完成' : ''
+    return { kind: 'plan', pct: (wf.done / wf.total) * 100, text: `代理 ${wf.done}/${wf.total}${eta}` }
   }
   if (row.state === 'running') return { kind: 'busy', pct: 100, text: '執行中（無待辦清單）' }
   if (row.state === 'stalled') return { kind: 'stalled', pct: 100, text: '停滯' }
@@ -161,6 +198,7 @@ function renderBoard(data, terminals, activePid) {
   parts.push(`<section><h2>帳號用量</h2>`)
   gauge('Claude 5 小時', claude.five_hour)
   gauge('Claude 7 天', claude.seven_day)
+  for (const m of claude.models || []) gauge(`${m.label} 7 天`, m)
   if (usage.codex) {
     gauge(`Codex ${windowLabel(usage.codex.primary && usage.codex.primary.windowMinutes)}`, usage.codex.primary)
     if (usage.codex.secondary) gauge(`Codex ${windowLabel(usage.codex.secondary.windowMinutes)}`, usage.codex.secondary)
@@ -179,7 +217,7 @@ function renderBoard(data, terminals, activePid) {
     const term = matchTerminal(row, terminals)
     const name = term ? term.name : row.terminal || row.title || row.project || `${row.tool} ${row.pid}`
     const st = STATE[row.state] || { label: row.state, cls: 'unknown' }
-    const prog = progressOf(row)
+    const prog = progressOf(row, now)
     const isActive = activePid !== null && activePid !== undefined && (row.pids || []).includes(activePid)
     const meta = []
     if ((row.state === 'running' || row.state === 'stalled') && row.turn && row.turn.seconds !== undefined) meta.push(`本回合 ${span(row.turn.seconds)}`)
@@ -192,13 +230,13 @@ function renderBoard(data, terminals, activePid) {
     }
     if (row.lastError) meta.push('<span class="lvl-bad">上回合錯誤</span>')
     const task = [row.title && row.title !== name ? row.title : '', row.plan && row.plan.current ? row.plan.current : ''].filter(Boolean).join(' · ')
-    const where = term ? '' : row.window ? `（在另一個 VS Code 視窗：${row.window}）` : '（不在這個視窗）'
+    const where = term ? '' : isTerminalHost(row) ? '（在 Windows Terminal，點一下切過去）' : row.window ? `（在另一個 VS Code 視窗：${row.window}）` : '（不在這個視窗）'
     const tip = [`${name}`, `${row.tool === 'codex' ? 'Codex' : 'Claude'} · ${row.project || ''}`, row.cwd || '', row.model ? `模型 ${row.model}` : '', `程序 ${row.pid}`]
       .filter(Boolean)
       .join('\n')
     parts.push(
       `<div class="row st-${st.cls}${isActive ? ' active' : ''}" data-key="${escapeHtml(rowKey(row))}" tabindex="0" title="${escapeHtml(tip)}">` +
-        `<div class="r-head"><span class="dot"></span><span class="r-name">${escapeHtml(name)}</span>` +
+        `<div class="r-head"><span class="dot"></span>${row.no ? `<span class="r-no">${escapeHtml(row.no)}</span>` : ''}<span class="r-name">${escapeHtml(name)}</span>` +
         `<span class="r-tool">${row.tool === 'codex' ? 'Codex' : 'Claude'}</span></div>` +
         `<div class="bar p-${prog.kind}"><i data-pct="${prog.pct}"></i></div>` +
         `<div class="r-meta"><span class="r-state">${escapeHtml(st.label)}</span><span>${escapeHtml(prog.text)}</span>` +
@@ -259,10 +297,13 @@ function findCollector(configured, home = HOME) {
 module.exports = {
   DATA_DIR,
   ago,
+  buildSwitchContext,
   cleanName,
   clock,
+  describeTerminal,
   escapeHtml,
   findCollector,
+  isTerminalHost,
   level,
   matchTerminal,
   miniBar,

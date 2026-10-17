@@ -227,7 +227,8 @@ def collect(procs, now_ts, stall_s, detail=False):
     for pid, chain in cli_processes(procs):
         created = procs.created_epoch(pid)
         path, meta = rollout_for(created) if created else (None, None)
-        row = {"tool": "codex", "pid": pid, "pids": chain, "startedAt": created, "state": "unknown",
+        row = {"tool": "codex", "pid": pid, "pids": chain, "host": procs.host(chain), "startedAt": created,
+               "state": "unknown",
                "id": None, "cwd": None, "project": "", "title": "", "lastActivity": None, "pendingTools": [],
                "lastError": False, "transcript": path}
         if path:

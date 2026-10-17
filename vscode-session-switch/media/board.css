@@ -151,6 +151,16 @@ button.link {
 .st-stalled .dot { background: var(--bad); }
 .st-unknown .dot { background: var(--warn); }
 
+/* 編號：和 /go 編號、狀態列清單、mod 面板相同 */
+.r-no {
+  flex: none;
+  min-width: 1.2em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .r-name {
   flex: 1;
   min-width: 0;
