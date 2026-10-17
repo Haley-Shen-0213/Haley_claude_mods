@@ -80,7 +80,7 @@ ctx ███▍░░░░░░ 34% · $3.42 │ session 5：執行中 3 · �
 claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_mods
 ```
 
-**方法二：clone 後從資料夾載入**（方便自行修改，存檔就會熱重載）。在 `~/.claude/settings.json` 加入下面這段，之後新開的 session 都會載入：
+**方法二：下載 ZIP 或 clone 後，從資料夾載入**（ZIP 在本 repo 的 Releases 頁；方便自行修改，存檔就會熱重載）。在 `~/.claude/settings.json` 加入下面這段，路徑換成解壓縮或 clone 後 `haley-cockpit` 資料夾的位置，之後新開的 session 都會載入：
 
 ```json
 {
@@ -107,7 +107,7 @@ claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_m
 
 `--list` 會多顯示一行 session 清單，不需要可以拿掉。
 
-用方法一安裝的副本放在 Claude Code 的外掛快取資料夾，路徑會隨版本改變；要用狀態列的話，建議另外 clone 一份來指向。
+用方法一安裝的副本放在 Claude Code 的外掛快取資料夾，路徑會隨版本改變；要用狀態列的話，建議另外下載 ZIP 或 clone 一份來指向。
 
 **VS Code 擴充（選用）**：見 [`vscode-session-switch/README.md`](vscode-session-switch/README.md)。
 

@@ -2,7 +2,7 @@
   "name": "haley-session-switch",
   "displayName": "Haley Cockpit（Session 切換與用量）",
   "description": "配合 haley-cockpit mod：狀態列顯示 Claude（含 Fable）／Codex 用量；右側欄面板列出每個 session 的進度條，點一下切到它的終端機（VS Code 或 Windows Terminal）",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "publisher": "haley-shen-0213",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/Haley-Shen-0213/Haley_claude_mods.git" },
