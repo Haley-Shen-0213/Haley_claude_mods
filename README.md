@@ -25,14 +25,14 @@
 
 | 指令 | 面板內容 |
 |---|---|
-| `/cockpit` | 一次開啟全部六個面板（面板上方有分頁可切換）；`/cockpit close` 一次關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
-| `/go` | 不帶參數：列出編號的 session 清單；`/go 3` 依編號、`/go 名稱` 依名稱（部分比對）切到那個 session 的終端機。編號依 session 啟動時間排，和狀態列清單、各面板相同，不會因狀態變動而跳號。 |
-| `/session-board` | 頂端是 Claude 5 小時／7 天、模型專屬額度（例如 Fable）與 Codex 額度的彩色進度條、重置倒數與近期走勢。下方是本機每個 Claude 與 Codex session 一列：狀態（執行中／閒置／停滯）、名稱、任務標題、迷你進度條與預估剩餘時間、context 使用比例、本回合已執行多久、最後動作距今。每 5 秒更新。點一列（或在面板內按 1～9）切到該 session 的終端機：在 VS Code 裡的切 VS Code 的終端機分頁（需要配套擴充），在 Windows Terminal 裡的選取對應分頁並把視窗帶到前景。沒有待辦清單但有工作流程在跑的 session，進度條改用「代理 完成數／總數」。<br><br><img src="docs/acceptance/03-session-board.png" alt="/session-board：帳號用量與 session 清單" width="720"> |
-| `/agent-board` | 本 session 的子代理，以及工作流程（Workflow 工具）派出的代理。工作流程依階段分組，顯示整體進度條、每個代理的描述、狀態、已執行時間、工具次數與最後使用的工具；執行中的預設展開、已完成的預設收合，點標題列切換。子代理：點一列就在主畫面檢視那個子代理的對話。<br><br><img src="docs/acceptance/04-agent-board.png" alt="/agent-board：工作流程的代理清單" width="720"> |
-| `/edit-heatmap` | 本 session 各檔案被 Edit／Write 成功修改的次數排行。從 session 紀錄檔重建，mod 重新載入也不會歸零；可切換成「所有存活的 session」。<br><br><img src="docs/acceptance/05-edit-heatmap.png" alt="/edit-heatmap：編輯熱點" width="720"> |
-| `/turn-timeline` | 本 session 每個回合的開始時間、耗時長條、輸出 token、API 呼叫數、工具次數，以及是否中斷或以錯誤結束。<br><br><img src="docs/acceptance/06-turn-timeline.png" alt="/turn-timeline：回合時間軸" width="720"> |
-| `/worktree-map` | 目前 repo 的 git worktree：路徑、分支、HEAD、鎖定或可清除狀態，並標出本 session 所在的那一個。<br><br><img src="docs/acceptance/07-worktree-map.png" alt="/worktree-map：git worktree 對照" width="720"> |
-| `/file-tree` | 專案檔案樹：點資料夾展開或收合；點檔名（或每列右側的「複製」）把路徑複製到剪貼簿，可在「絕對路徑」與「相對於根目錄」之間切換；可上一層、回專案根目錄、複製根目錄。預設略過 `.git`、`node_modules` 等大型資料夾，按「顯示全部」可看到。<br><br><img src="docs/acceptance/02-file-tree.png" alt="/file-tree：專案檔案樹" width="720"> |
+| `/cockpit` | 一次開啟全部六個面板（上方有分頁可切換）；`/cockpit close` 全部關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
+| `/go` | 列出編號的 session；`/go 3` 或 `/go 名稱` 切到那個 session 的終端機。 |
+| `/session-board` | 帳號用量（Claude 5 小時／7 天、Fable 等模型額度、Codex）與所有 session 的狀態、進度、context 比例；點一列切到該 session 的終端機（VS Code 或 Windows Terminal）。<br><br><img src="docs/acceptance/03-session-board.png" alt="/session-board：帳號用量與 session 清單" width="720"> |
+| `/agent-board` | 子代理與工作流程派出的代理：依階段分組，顯示進度、狀態與已執行時間。<br><br><img src="docs/acceptance/04-agent-board.png" alt="/agent-board：工作流程的代理清單" width="720"> |
+| `/edit-heatmap` | 本 session 各檔案被 Edit／Write 修改的次數排行。<br><br><img src="docs/acceptance/05-edit-heatmap.png" alt="/edit-heatmap：編輯熱點" width="720"> |
+| `/turn-timeline` | 本 session 每個回合的耗時、輸出 token、API 呼叫與工具次數。<br><br><img src="docs/acceptance/06-turn-timeline.png" alt="/turn-timeline：回合時間軸" width="720"> |
+| `/worktree-map` | 目前 repo 的 git worktree、分支與 HEAD，標出本 session 所在的那一個。<br><br><img src="docs/acceptance/07-worktree-map.png" alt="/worktree-map：git worktree 對照" width="720"> |
+| `/file-tree` | 專案檔案樹：點資料夾展開，點檔名或「複製」複製路徑（絕對或相對）。<br><br><img src="docs/acceptance/02-file-tree.png" alt="/file-tree：專案檔案樹" width="720"> |
 
 狀態列（選用，`haley-cockpit/collector/statusline.py`）：
 
