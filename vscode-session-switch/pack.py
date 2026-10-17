@@ -9,13 +9,19 @@ import zipfile
 from xml.sax.saxutils import escape
 
 HERE = pathlib.Path(__file__).resolve().parent
-FILES = ["package.json", "extension.js", "README.md"]
+# （來源, 套件內路徑）；授權檔放在 repo 根目錄，打包時改名 LICENSE.txt（沒有副檔名的檔案在套件格式裡無法標示類型）
+FILES = [("package.json", "package.json"), ("extension.js", "extension.js"), ("lib.js", "lib.js"),
+         ("README.md", "README.md"), ("../LICENSE", "LICENSE.txt"), ("media/board.js", "media/board.js"),
+         ("media/board.css", "media/board.css"), ("media/cockpit.svg", "media/cockpit.svg")]
 
 CONTENT_TYPES = """<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension=".json" ContentType="application/json"/>
   <Default Extension=".js" ContentType="application/javascript"/>
   <Default Extension=".md" ContentType="text/markdown"/>
+  <Default Extension=".css" ContentType="text/css"/>
+  <Default Extension=".svg" ContentType="image/svg+xml"/>
+  <Default Extension=".txt" ContentType="text/plain"/>
   <Default Extension=".vsixmanifest" ContentType="text/xml"/>
 </Types>
 """
@@ -56,10 +62,12 @@ def main():
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("extension.vsixmanifest", manifest(pkg))
-        for name in FILES:
-            src = HERE / name
+        for src_name, dst_name in FILES:
+            src = (HERE / src_name).resolve()
             if src.exists():
-                z.write(src, f"extension/{name}")
+                z.write(src, f"extension/{dst_name}")
+            elif src_name != "../LICENSE":
+                raise SystemExit(f"缺少檔案：{src}")
     print(out)
 
 

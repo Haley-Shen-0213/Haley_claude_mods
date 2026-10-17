@@ -1,0 +1,219 @@
+/* 路徑： media\board.css */
+/* 駕駛艙面板樣式：顏色全部取自 VS Code 主題變數，深色與淺色主題都能用；用量與 context 的配色門檻與終端機狀態列相同。 */
+:root {
+  --ok: var(--vscode-charts-green, #3fb950);
+  --warn: var(--vscode-charts-yellow, #d29922);
+  --bad: var(--vscode-charts-red, #f85149);
+  --busy: var(--vscode-charts-blue, #3794ff);
+  --muted: var(--vscode-descriptionForeground, #8b949e);
+  --track: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+}
+
+body {
+  margin: 0;
+  padding: 4px 10px 10px;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.warn {
+  color: var(--warn);
+  font-size: 11px;
+}
+
+.foot {
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.bar {
+  position: relative;
+  height: 6px;
+  margin: 4px 0;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--busy);
+  transition: width 0.4s ease;
+}
+
+/* 帳號用量 */
+.gauge {
+  margin: 6px 0 8px;
+}
+
+.g-head {
+  display: flex;
+  justify-content: space-between;
+}
+
+.g-val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.g-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.gauge.lvl-ok .bar > i { background: var(--ok); }
+.gauge.lvl-warn .bar > i { background: var(--warn); }
+.gauge.lvl-bad .bar > i { background: var(--bad); }
+.gauge.lvl-ok .g-val, span.lvl-ok { color: var(--ok); }
+.gauge.lvl-warn .g-val, span.lvl-warn { color: var(--warn); }
+.gauge.lvl-bad .g-val, span.lvl-bad { color: var(--bad); }
+
+/* 狀態小標籤 */
+.chip {
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 400;
+  border: 1px solid var(--track);
+}
+
+.chip.running { color: var(--ok); }
+.chip.stalled { color: var(--bad); }
+.chip.idle { color: var(--muted); }
+
+button.link {
+  margin-left: auto;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+/* 每個 session 一列 */
+.row {
+  margin: 4px 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.row:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.row.active {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.r-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.st-running .dot { background: var(--ok); }
+.st-stalled .dot { background: var(--bad); }
+.st-unknown .dot { background: var(--warn); }
+
+.r-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.r-tool {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.r-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.r-state {
+  font-weight: 600;
+}
+
+.st-running .r-state { color: var(--ok); }
+.st-stalled .r-state { color: var(--bad); }
+.st-unknown .r-state { color: var(--warn); }
+
+.r-task {
+  margin-top: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 進度條四種樣子：有待辦清單時是完成比例；沒有清單時，執行中是流動條、停滯是紅色、閒置留空 */
+.st-running .p-plan > i { background: var(--ok); }
+.st-stalled .p-plan > i { background: var(--bad); }
+.st-idle .p-plan > i { background: var(--muted); }
+
+.p-busy > i {
+  background: repeating-linear-gradient(-45deg, var(--ok) 0 6px, transparent 6px 12px);
+  background-size: 17px 17px;
+  animation: flow 1s linear infinite;
+}
+
+.p-stalled > i {
+  background: var(--bad);
+}
+
+@keyframes flow {
+  from { background-position: 0 0; }
+  to { background-position: 17px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .p-busy > i { animation: none; }
+}

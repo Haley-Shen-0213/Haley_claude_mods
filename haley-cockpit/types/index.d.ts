@@ -28,6 +28,12 @@ export type CockpitSession = {
   turnCount?: number
   turn?: { startedAt: number | null; seconds: number; calls?: number; outputTokens?: number; tools?: number }
   model?: string | null
+  /** VS Code 擴充回報的終端機名稱（和分頁清單相同）；沒裝擴充或不在 VS Code 時沒有 */
+  terminal?: string
+  terminalIndex?: number | null
+  window?: string
+  /** context 使用比例：Claude 取自該 session 狀態列的回報，Codex 取自 rollout 的 token 事件 */
+  ctx?: { pct: number | null; at: number | null } | null
 }
 
 export type CockpitSparks = { c5: (number | null)[]; c7: (number | null)[]; x1: (number | null)[] }

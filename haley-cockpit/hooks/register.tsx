@@ -484,25 +484,32 @@ export const register: Register = (on, options) => {
     const claude = b.usage.claude
     const codex = b.usage.codex
     const sp = b.sparks
-    // 欄寬：狀態、工具、專案、進度、本回合、最後動作固定，任務吃剩下的；太窄時先拿掉工具與本回合
+    // 欄寬：狀態、工具、名稱、進度、ctx、本回合、最後動作固定，任務吃剩下的；太窄時先拿掉工具、ctx 與本回合
     const hot = 3 // plain Button 前面的「1: 」
     const narrow = cols < 110
-    const W = { state: 9, tool: narrow ? 0 : 7, project: narrow ? 16 : 20, progress: 15, turn: narrow ? 0 : 10, last: 14 }
-    const fixed = W.state + W.tool + W.project + W.progress + W.turn + W.last + hot + 1
+    const W = { state: 9, tool: narrow ? 0 : 7, name: narrow ? 16 : 20, progress: 22, ctx: narrow ? 0 : 6, turn: narrow ? 0 : 10, last: 14 }
+    const fixed = W.state + W.tool + W.name + W.progress + W.ctx + W.turn + W.last + hot + 1
     const taskW = Math.max(10, cols - fixed)
     const header = (
       <Text dimColor>
-        {' '.repeat(hot) + fit('狀態', W.state) + fit('工具', W.tool) + fit('專案', W.project) + fit('任務', taskW) +
-          fit('進度／預估剩餘', W.progress) + fit('本回合', W.turn) + fit('最後動作', W.last)}
+        {' '.repeat(hot) + fit('狀態', W.state) + fit('工具', W.tool) + fit('名稱', W.name) + fit('任務', taskW) +
+          fit('進度／預估剩餘', W.progress) + fit('ctx', W.ctx) + fit('本回合', W.turn) + fit('最後動作', W.last)}
       </Text>
     )
     const rows = b.sessions.map((s, i) => {
       const [label, color] = STATE_LABEL[s.state] ?? [s.state, 'warning']
       const mark = s.tool === 'claude' && s.id === self ? '▶' : ' '
+      // 名稱用 VS Code 擴充回報的終端機名稱（和分頁清單一樣）；沒有時用專案資料夾名
+      const name = s.terminal || s.project
       const task = (s.title || (s.tool === 'codex' ? '（Codex 未命名）' : '（未命名）')) + (s.plan?.current ? ` · ${s.plan.current}` : '')
-      const progress = s.plan
+      // 每列一條迷你進度條：有待辦清單時是完成比例；沒有清單時，執行中畫成網點、其他留空
+      const mini = s.plan && s.plan.total > 0
+        ? bar((s.plan.done / s.plan.total) * 100, 6).join('')
+        : s.state === 'running' || s.state === 'stalled' ? '▒▒▒▒▒▒' : '░░░░░░'
+      const progress = mini + ' ' + (s.plan
         ? `${s.plan.done}/${s.plan.total}` + (s.plan.eta !== null ? ` ≈${span(s.plan.eta)}` : s.plan.done >= s.plan.total ? ' 完成' : '')
-        : '無計畫'
+        : '無計畫')
+      const ctx = s.ctx && s.ctx.pct !== null ? `${Math.round(s.ctx.pct)}%` : ''
       const turn = (s.state === 'running' || s.state === 'stalled') && s.turn ? span(s.turn.seconds) : ''
       const lastAgo = s.lastActivity ? ago(now - s.lastActivity) : '—'
       const last = s.pendingTools.length > 0 && (s.state === 'running' || s.state === 'stalled')
@@ -513,9 +520,10 @@ export const register: Register = (on, options) => {
         <Button key={`row:${s.tool}:${s.pid}`} plain {...(i < 9 ? { hotkey: String(i + 1) } : {})} onPress={() => void requestSwitch($, s)}>
           <Text color={color}>{fit(mark + label, W.state)}</Text>
           <Text dimColor>{fit(W.tool ? toolName(s.tool) : '', W.tool)}</Text>
-          <Text>{fit((W.tool ? '' : toolName(s.tool)[0] + ' ') + s.project, W.project)}</Text>
+          <Text>{fit((W.tool ? '' : toolName(s.tool)[0] + ' ') + name, W.name)}</Text>
           <Text>{fit(task, taskW)}</Text>
-          <Text color={s.plan ? 'text' : 'subtle'}>{fit(progress, W.progress)}</Text>
+          <Text color={s.plan ? 'text' : s.state === 'running' ? 'success' : 'subtle'}>{fit(progress, W.progress)}</Text>
+          <Text color={s.ctx && s.ctx.pct !== null ? level(s.ctx.pct) : 'subtle'}>{fit(ctx, W.ctx)}</Text>
           <Text dimColor>{fit(turn, W.turn)}</Text>
           <Text color={s.lastError ? 'warning' : 'subtle'}>{fit(extra + last, W.last)}</Text>
         </Button>

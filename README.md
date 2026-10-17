@@ -5,7 +5,7 @@
 | 資料夾 | 是什麼 |
 |---|---|
 | [`haley-cockpit/`](haley-cockpit/) | Claude Code mod「駕駛艙」：本機所有 Claude／Codex session 的總覽與帳號用量、編輯熱點、子代理、回合時間軸、git worktree，另附一支狀態列程式 |
-| [`vscode-session-switch/`](vscode-session-switch/) | 配套的 VS Code 擴充：在總覽面板點一列，就切到該 session 所在的終端機分頁 |
+| [`vscode-session-switch/`](vscode-session-switch/) | 配套的 VS Code 擴充：狀態列右側顯示用量；右側欄「Claude 駕駛艙」每個 session 一條進度條，名稱和終端機分頁相同，點一下切到該終端機 |
 
 > ⚠️ **使用前請先讀完下方〈免責聲明〉。** 這是個人工具，不是官方產品。
 
@@ -13,7 +13,7 @@
 
 1. **非官方**：本專案是個人自製的工具，與 Anthropic、OpenAI、Microsoft 沒有任何關係，也未經它們審核、認可或背書。Claude、Claude Code、Codex、ChatGPT、Visual Studio Code 等名稱與商標屬於各自的所有者。
 2. **API 可能變動**：Claude Code 的 mod（函式掛鉤外掛）API 目前是搶先體驗（early access），官方註明各版本之間可能變動而不另行通知。本專案只在這個環境測試過：Windows 11、Claude Code 2.1.301／2.1.302、Codex CLI 0.163、VS Code 1.138、Python 3.13。其他版本或平台可能部分或完全無法運作。
-3. **依現狀提供，不負擔保責任**：本專案依「現狀」提供，不附任何明示或默示的保證，包括但不限於適售性、特定用途適用性與不侵權。因使用或無法使用本專案而產生的任何直接或間接損失，例如資料遺失、帳號用量或費用消耗、工作中斷、設定檔損壞，作者概不負責；使用風險由使用者自行承擔。
+3. **依現狀提供，不負擔保責任**：本專案依「現狀」提供，不附任何明示或默示的保證，包括但不限於適售性、特定用途適用性與不侵權。因使用或無法使用本專案而產生的任何直接或間接損失，例如資料遺失、帳號用量或費用消耗、工作中斷、設定檔損壞，作者概不負責；使用風險由使用者自行承擔。[MIT 授權條款](LICENSE)中的免責條款同樣適用，以英文原文為準。
 4. **會讀取你的 session 紀錄**：為了顯示進度，本工具會在你的電腦上讀取 Claude Code 與 Codex 的 session 紀錄檔（`~/.claude/projects/`、`~/.codex/sessions/` 等），這些檔案可能含有你的程式碼、提示與 AI 回覆。所有解析都在本機進行：本工具不連網、不上傳，也不修改那些紀錄檔。但面板會在畫面上顯示 session 標題與待辦項目的文字，在共用螢幕、錄影或受管理的電腦上使用前，請自行評估風險。完整清單見〈會讀寫哪些檔案〉。
 5. **數字是推算的**：用量百分比、重置倒數、預估剩餘時間與停滯判斷，都是依本機紀錄，以及各 session 最近一次收到的回應推算，可能落後，也可能與官方顯示不同。請以官方介面（例如 Claude Code 的 `/usage`）為準，不要依這些數字做計費或排程決策。
 6. **不保證維護**：本專案可能隨時停止更新，也可能不經通知修改或移除功能。
@@ -24,7 +24,7 @@
 
 | 指令 | 面板內容 |
 |---|---|
-| `/session-board` | 頂端是 Claude 5 小時／7 天與 Codex 額度的彩色進度條、重置倒數與近期走勢。下方是本機每個 Claude 與 Codex session 一列：狀態（執行中／閒置／停滯）、專案、任務標題、待辦進度與預估剩餘時間、本回合已執行多久、最後動作距今。每 5 秒更新。點一列（或在面板內按 1～9）切到該 session 的 VS Code 終端機，需要安裝 `vscode-session-switch`。 |
+| `/session-board` | 頂端是 Claude 5 小時／7 天與 Codex 額度的彩色進度條、重置倒數與近期走勢。下方是本機每個 Claude 與 Codex session 一列：狀態（執行中／閒置／停滯）、名稱、任務標題、迷你進度條與預估剩餘時間、context 使用比例、本回合已執行多久、最後動作距今。每 5 秒更新。點一列（或在面板內按 1～9）切到該 session 的 VS Code 終端機。裝了 `vscode-session-switch` 時，名稱會和 VS Code 終端機分頁清單相同；沒裝時用專案資料夾名。 |
 | `/edit-heatmap` | 本 session 各檔案被 Edit／Write 成功修改的次數排行。從 session 紀錄檔重建，mod 重新載入也不會歸零；可切換成「所有存活的 session」。 |
 | `/agent-board` | 本 session 的子代理：類型、任務、狀態、已執行時間。點一列就在主畫面檢視那個子代理的對話。 |
 | `/turn-timeline` | 本 session 每個回合的開始時間、耗時長條、輸出 token、API 呼叫數、工具次數，以及是否中斷或以錯誤結束。 |
@@ -37,7 +37,7 @@ Claude 5h █████▍░░░░ 54% ↻2時12分  7d ████▎░
 ctx ███▍░░░░░░ 34% · $3.42 │ session 7：執行中 1 · 閒置 6 · 停滯 0
 ```
 
-用量顏色：低於 50% 綠、50～80% 黃、超過 80% 紅（面板相同）。`↻` 後面是距離重置的時間。
+用量顏色：低於 50% 綠、50～80% 黃、超過 80% 紅（面板相同）。在指令最後加上 `--hide-usage` 只顯示第 2 行，適合已經用 VS Code 擴充在狀態列右側看用量的人。
 
 ### 判斷規則
 
@@ -111,6 +111,8 @@ claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_m
 會寫入（全部在 `~/.claude/haley-cockpit/`）：
 
 - `usage.json`、`usage_history.jsonl`：用量快取與走勢樣本（保留 8 天）
+- `ctx/<session>.json`：各 Claude session 的狀態列回報的 context 比例與花費（每個 session 一個小檔，可隨時刪除）
+- `terminals/terminals-<程序編號>.json`：VS Code 擴充回報的終端機名稱（每個 VS Code 視窗一份，關閉視窗時刪除）
 - `cache/`：紀錄檔的增量解析結果（數字、待辦文字、檔案路徑）
 - `switch-request.json`、`switch-ack.json`：和 VS Code 擴充交換的切換請求與回覆
 - `statusline-error.log`：狀態列出錯時的錯誤訊息
@@ -135,4 +137,4 @@ node vscode-session-switch/test/run-test.js
 
 ## 授權
 
-尚未指定授權條款。在公布授權條款之前，本 repo 的內容保留所有權利；歡迎閱讀與回報問題。
+[MIT](LICENSE)：可以自由使用、修改、再散布，包括商業用途，條件是保留著作權與授權聲明；本專案不提供任何保證。條文以英文原文為準。

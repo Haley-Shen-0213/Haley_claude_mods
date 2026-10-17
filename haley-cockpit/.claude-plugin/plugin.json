@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量、編輯熱點、子代理、回合時間軸、git worktree",
   "author": { "name": "Haley-Shen-0213", "url": "https://github.com/Haley-Shen-0213" },
+  "license": "MIT",
+  "repository": "https://github.com/Haley-Shen-0213/Haley_claude_mods",
   "types": "./types/index.d.ts",
   "userConfig": {
     "stallMinutes": {

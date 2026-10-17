@@ -23,6 +23,7 @@ const BOARD = {
       title: '整理文件', state: 'running', since: NOW_S - 300, lastActivity: NOW_S - 5, pendingTools: ['Bash'],
       lastError: false, startedAt: NOW_S - 3600, plan: { done: 2, total: 5, current: '寫測試', startedAt: NOW_S - 600, eta: 900 },
       turnCount: 3, turn: { startedAt: NOW_S - 300, seconds: 300, calls: 4, outputTokens: 1200, tools: 6 },
+      terminal: 'Alpha 中控台', terminalIndex: 1, window: 'workspace', ctx: { pct: 62, at: NOW_S - 30 },
     },
     {
       tool: 'codex', id: 'thread-1', pid: 444, pids: [444, 555, 666, 333], cwd: 'D:\\work\\beta', project: 'beta',
@@ -96,9 +97,11 @@ test('總覽面板畫出收集器的資料，點一列寫出切換請求', async
   expect(argv ?? []).toContain('--claude-rate')
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'haley-cockpit', surface, component: 'Pane', requestId: 'session-board', props: paneProps('Session 總覽') })
-    expect(await ui.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Alpha 中控台/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /beta/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /▲ 停滯/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /2\/5 ≈15分00秒/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /██▍░░░ 2\/5 ≈15分00秒/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /62%/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Codex 7 天/ })).toBeDefined()
     await ui.unmount()
   }

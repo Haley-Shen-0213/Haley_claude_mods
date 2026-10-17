@@ -49,7 +49,8 @@ def gauge(label, used, resets_at, now_ts, width, countdown=True):
         return f"{label} {DIM}已重置{RESET}"
     text = f"{label} {bar(used, width)} {color_of(used)}{used:.0f}%{RESET}"
     if countdown and resets_at and resets_at > now_ts:
-        text += f" {DIM}↻{span(resets_at - now_ts)}{RESET}"
+        # 用文字不用 ↻：部分終端機字型沒有這個符號，會畫成看不懂的字
+        text += f" {DIM}{span(resets_at - now_ts)}後重置{RESET}"
     return text
 
 
@@ -94,17 +95,22 @@ def line_session(data, counts, cols):
 
 
 def main():
+    args = sys.argv[1:]
     raw = sys.stdin.buffer.read().decode("utf-8", "replace")
     data = json.loads(raw) if raw.strip() else {}
-    if len(sys.argv) > 2 and sys.argv[1] == "--dump-input":
+    if "--dump-input" in args and args.index("--dump-input") + 1 < len(args):
         # 只在驗證時使用：把 Claude Code 傳來的 JSON 存檔，核對欄位
-        with open(sys.argv[2], "w", encoding="utf-8") as f:
+        with open(args[args.index("--dump-input") + 1], "w", encoding="utf-8") as f:
             f.write(raw)
+    # 不論畫面顯示哪幾行都要回報：其他 session、mod 面板與 VS Code 擴充都靠這兩份資料
     usage.record_claude(data.get("rate_limits"))
+    usage.record_session_ctx(data)
     result = board.collect(detail=False)
     cols = int(os.environ.get("COLUMNS") or 120)
     now_ts = result["now"]
-    print(line_usage(result["usage"], now_ts, cols))
+    # --hide-usage：帳號用量改由 VS Code 狀態列顯示時，終端機只留第 2 行
+    if "--hide-usage" not in args:
+        print(line_usage(result["usage"], now_ts, cols))
     print(line_session(data, result["counts"], cols))
 
 

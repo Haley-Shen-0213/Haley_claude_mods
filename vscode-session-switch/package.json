@@ -1,9 +1,10 @@
 {
   "name": "haley-session-switch",
-  "displayName": "Haley Session Switch",
-  "description": "配合 haley-cockpit mod：在 /session-board 點一列，就切到該 Claude／Codex session 所在的 VS Code 終端機分頁",
-  "version": "0.1.0",
+  "displayName": "Haley Cockpit（Session 切換與用量）",
+  "description": "配合 haley-cockpit mod：狀態列顯示 Claude／Codex 用量；右側欄面板列出每個 session 的進度條，點一下切到它的終端機",
+  "version": "0.2.0",
   "publisher": "haley-shen-0213",
+  "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/Haley-Shen-0213/Haley_claude_mods.git" },
   "engines": { "vscode": "^1.80.0" },
   "categories": ["Other"],
@@ -11,8 +12,46 @@
   "main": "./extension.js",
   "activationEvents": ["onStartupFinished"],
   "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        { "id": "haleyCockpit", "title": "Claude 駕駛艙", "icon": "media/cockpit.svg" }
+      ]
+    },
+    "views": {
+      "haleyCockpit": [
+        { "type": "webview", "id": "haleyCockpit.board", "name": "Session 與用量", "icon": "media/cockpit.svg" }
+      ]
+    },
     "commands": [
-      { "command": "haleySessionSwitch.showLog", "title": "Haley Session Switch：顯示切換紀錄" }
-    ]
+      { "command": "haleyCockpit.open", "title": "Haley Cockpit：開啟駕駛艙" },
+      { "command": "haleyCockpit.refresh", "title": "Haley Cockpit：立即重新整理" },
+      { "command": "haleySessionSwitch.showLog", "title": "Haley Cockpit：顯示紀錄" }
+    ],
+    "configuration": {
+      "title": "Haley Cockpit",
+      "properties": {
+        "haleyCockpit.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "在狀態列右側顯示 Claude 與 Codex 的用量，以及 session 數量"
+        },
+        "haleyCockpit.refreshSeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 2,
+          "description": "駕駛艙面板顯示時的更新間隔（秒）；面板沒顯示時固定 30 秒更新一次狀態列"
+        },
+        "haleyCockpit.collectorPath": {
+          "type": "string",
+          "default": "",
+          "description": "haley-cockpit 收集程式 cockpit_cli.py 的完整路徑；留空時，從 ~/.claude/settings.json 的 CLAUDE_CODE_PLUGIN_DIRS 或已安裝的外掛中自動尋找"
+        },
+        "haleyCockpit.python": {
+          "type": "string",
+          "default": "python",
+          "description": "執行收集程式用的 Python（3.10 以上）；不在 PATH 上時填完整路徑"
+        }
+      }
+    }
   }
 }

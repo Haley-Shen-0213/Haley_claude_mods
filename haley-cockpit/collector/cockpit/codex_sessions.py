@@ -11,7 +11,7 @@ from . import common
 
 SESSIONS_DIR = os.path.join(common.CODEX_DIR, "sessions")
 INDEX_PATH = os.path.join(common.CODEX_DIR, "session_index.jsonl")
-CACHE_VERSION = 1
+CACHE_VERSION = 2  # 2：快取多存 context 比例，舊快取重新解析一次
 # 實測（2026-10-16）：codex.exe 啟動與主執行緒 rollout 檔名時間相差 1 秒內；審查子代理的 rollout 晚 1 秒建立，要靠 session_meta 排除
 MATCH_WINDOW = 15
 SHELLS = {"powershell.exe", "pwsh.exe", "cmd.exe", "bash.exe", "wsl.exe", "nu.exe"}
@@ -99,7 +99,17 @@ def thread_names():
 def _new_state(path):
     return {"v": CACHE_VERSION, "path": path, "offset": 0, "lastTs": None, "running": False, "turnStart": None,
             "turns": 0, "aborted": False, "plan": None, "planStart": None, "rate": None, "rateTs": None,
-            "tokens": None, "lastErr": False, "model": None}
+            "tokens": None, "lastErr": False, "model": None, "ctx": None, "ctxTs": None}
+
+
+def _ctx_pct(info):
+    """context 比例＝最近一次請求的 token 數 ÷ 模型的 context 視窗（token_count 事件的 info 兩個欄位）。"""
+    last = info.get("last_token_usage") if isinstance(info.get("last_token_usage"), dict) else {}
+    window = info.get("model_context_window")
+    total = last.get("total_tokens")
+    if not window or total is None:
+        return None
+    return round(min(100.0, 100.0 * float(total) / float(window)), 1)
 
 
 def _set_plan(st, plan, ts):
@@ -131,6 +141,9 @@ def _feed(st, o):
             info = p.get("info") if isinstance(p.get("info"), dict) else {}
             if isinstance(info.get("total_token_usage"), dict):
                 st["tokens"] = info["total_token_usage"]
+            pct = _ctx_pct(info)
+            if pct is not None:
+                st["ctx"], st["ctxTs"] = pct, ts
         elif pt in ("error", "stream_error"):
             st["lastErr"] = True
         elif pt == "plan_update":
@@ -231,6 +244,8 @@ def collect(procs, now_ts, stall_s, detail=False):
                 row["lastError"] = st["lastErr"] or st["aborted"]
                 if running and st["turnStart"]:
                     row["turn"] = {"startedAt": st["turnStart"], "seconds": now_ts - st["turnStart"]}
+                if st.get("ctx") is not None:
+                    row["ctx"] = {"pct": st["ctx"], "at": st.get("ctxTs")}
                 if st["rate"]:
                     rates.append((st["rateTs"] or 0, st["rate"]))
             else:

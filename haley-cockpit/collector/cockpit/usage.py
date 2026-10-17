@@ -2,6 +2,7 @@
 # 帳號用量：Claude 的 5 小時／7 天由各 session 的狀態列寫進共用快取，Codex 取最新一次 rollout 額度回報；另存歷史樣本給 mod 畫走勢。
 import json
 import os
+import re
 
 from . import common
 
@@ -38,6 +39,22 @@ def record_claude(rate_limits):
     if changed:
         store["claude"] = claude
         common.write_json_atomic(USAGE_PATH, store)
+
+
+def record_session_ctx(data):
+    """狀態列收到的本 session context 比例與花費，寫成 ctx\\<session_id>.json 給總覽與 VS Code 面板用。
+    context 視窗大小只有 Claude Code 自己知道（依模型而異），所以由各 session 的狀態列回報，不在收集端推算。"""
+    sid = str(data.get("session_id") or "")
+    ctx = data.get("context_window") or {}
+    pct = ctx.get("used_percentage")
+    if not re.fullmatch(r"[0-9A-Za-z-]{8,64}", sid) or pct is None:
+        return
+    path = os.path.join(common.CTX_DIR, f"{sid}.json")
+    new = {"pct": float(pct), "size": ctx.get("context_window_size"),
+           "cost": (data.get("cost") or {}).get("total_cost_usd"), "model": (data.get("model") or {}).get("id")}
+    old = common.read_json(path) or {}
+    if any(old.get(k) != v for k, v in new.items()):
+        common.write_json_atomic(path, {**new, "at": common.now()})
 
 
 def record_codex(found):

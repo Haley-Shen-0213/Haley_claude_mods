@@ -14,6 +14,10 @@ CODEX_DIR = os.path.join(HOME, ".codex")
 # HALEY_COCKPIT_DATA 只給測試用：拿假資料測狀態列時，不要寫進真正的用量快取。
 DATA_DIR = os.environ.get("HALEY_COCKPIT_DATA") or os.path.join(CLAUDE_DIR, "haley-cockpit")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
+# 各 Claude session 的狀態列回報自己的 context 比例（只有 Claude Code 自己知道視窗大小）
+CTX_DIR = os.path.join(DATA_DIR, "ctx")
+# VS Code 擴充回報各視窗的終端機名稱與 shell pid，總覽用它顯示和分頁清單一樣的名稱
+TERMINALS_DIR = os.path.join(DATA_DIR, "terminals")
 PLUGIN_NAME = "haley-cockpit"
 DEFAULT_STALL_MINUTES = 10
 
