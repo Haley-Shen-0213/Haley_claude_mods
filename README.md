@@ -109,7 +109,15 @@ claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_m
 
 用方法一安裝的副本放在 Claude Code 的外掛快取資料夾，路徑會隨版本改變；要用狀態列的話，建議另外下載 ZIP 或 clone 一份來指向。
 
-**VS Code 擴充（選用）**：見 [`vscode-session-switch/README.md`](vscode-session-switch/README.md)。
+**VS Code 擴充（選用）**：本專案不附打包好的 `.vsix`，也不會自動改你的 VS Code；要用的話自己打包並安裝（在解壓縮或 clone 後的資料夾裡執行）：
+
+```
+cd vscode-session-switch
+python pack.py            # 在系統暫存資料夾產生 .vsix，並印出路徑
+code --install-extension <上一步印出的 .vsix 路徑>
+```
+
+安裝或升級後，在每個已開啟的 VS Code 視窗執行一次「Developer: Reload Window」。移除：`code --uninstall-extension haley-shen-0213.haley-session-switch`。完整說明與設定見 [`vscode-session-switch/README.md`](vscode-session-switch/README.md)。
 
 ### 會讀寫哪些檔案
 
