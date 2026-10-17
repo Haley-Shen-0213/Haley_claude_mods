@@ -103,8 +103,9 @@ export function registerTree(on: On): void {
       await update($, treeOpen, () => [])
       await refreshTree($)
     }
+    // 六個按鈕加起來超過九十欄，不換行會被截掉最後一個（驗收截圖看到過）
     const toolbar = (
-      <Box gap={1}>
+      <Box gap={1} flexWrap="wrap">
         <Button key="refresh" hotkey="r" onPress={() => void refreshTree($)}>重新整理</Button>
         <Button key="fmt" hotkey="s" onPress={() => void update($, treeAbs, v => !v)}>{abs ? '路徑：絕對' : '路徑：相對'}</Button>
         <Button key="all" hotkey="h" onPress={() => void update($, treeHidden, v => !v)}>{showAll ? '顯示：全部' : '顯示：略過 .git 等'}</Button>
@@ -144,7 +145,8 @@ export function registerTree(on: On): void {
     return (
       <Box flexDirection="column">
         {toolbar}
-        <Text dimColor>{`${root}　點資料夾展開、點檔名複製${abs ? '絕對' : '相對'}路徑，右側「複製」複製那一列的路徑`}</Text>
+        <Text dimColor>{root}</Text>
+        <Text dimColor>{`點資料夾展開；點檔名複製${abs ? '絕對' : '相對'}路徑；右側「複製」複製那一列`}</Text>
         {notice ? <Text color="suggestion">{notice}</Text> : null}
         {error ? <Text color="warning">{`部分資料夾讀不到：${error}`}</Text> : null}
         {rows.map(r => {

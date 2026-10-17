@@ -6,7 +6,7 @@ import { atom, read, update } from 'claude-code'
 import type { AgentInfo, AgentStatus, Color, On, PluginOptions } from 'claude-code'
 
 import type { CockpitAgentsData, CockpitAgentTime, CockpitLoad, CockpitWorkflowAgent, CockpitWorkflowRun } from '../types'
-import { EMPTY, bar, count, fetchOnce, fit, merge, right, runCli, span, stallMinutes } from './helpers'
+import { EMPTY, bar, count, fetchOnce, fit, merge, right, runCli, span, stallMinutes, width } from './helpers'
 import type { Dollar } from './helpers'
 
 // 子代理（官方清單）沒有時間欄位，所以在生成與回合結束時自己記
@@ -99,13 +99,16 @@ export function registerAgents(on: On, options: PluginOptions): void {
       const elapsed = run.startedAt ? span(((run.endedAt ?? wf.data?.now ?? 0) - run.startedAt)) : ''
       const phases = isOpen ? byPhase(run.agents) : []
       let shown = 0
+      // 標題列只放名稱與完成數；已執行時間與輸出量另起一行：面板只有九十欄左右，全擠在一行會被擠到下一行（驗收截圖看到過）
+      const stats = `　${c.done}/${run.total} 完成　執行中 ${c.running}${c.stalled ? `　停滯 ${c.stalled}` : ''}${c.pending ? `　待開始 ${c.pending}` : ''}`
+      const nameW = Math.max(8, cols - 11 - width(stats) - 2)
       return (
         <Box key={`run-box:${run.runId}`} flexDirection="column">
           <Button key={`run:${run.runId}`} plain onPress={() => void update($, flippedRuns, v => (v.includes(run.runId) ? v.filter(x => x !== run.runId) : [...v, run.runId]))}>
-            <Text color={color} weight="bold">{`${isOpen ? '▾' : '▸'} 工作流程 ${run.name}`}</Text>
-            <Text color={color}>{`　${c.done}/${run.total} 完成　執行中 ${c.running}${c.stalled ? `　停滯 ${c.stalled}` : ''}${c.pending ? `　待開始 ${c.pending}` : ''}`}</Text>
-            <Text dimColor>{`　${elapsed ? `已執行 ${elapsed}　` : ''}輸出 ${count(run.outputTokens)} token`}</Text>
+            <Text color={color} weight="bold">{`${isOpen ? '▾' : '▸'} 工作流程 ${fit(run.name, Math.min(width(run.name), nameW)).trimEnd()}`}</Text>
+            <Text color={color}>{stats}</Text>
           </Button>
+          <Text dimColor>{`  ${elapsed ? `已執行 ${elapsed}　` : ''}輸出 ${count(run.outputTokens)} token`}</Text>
           <Box>
             <Text color={color}>{'  ' + filled}</Text>
             <Text dimColor>{empty}</Text>
@@ -115,7 +118,8 @@ export function registerAgents(on: On, options: PluginOptions): void {
           {phases.map(([phase, list]) => {
             const done = list.filter(a => a.state === 'done').length
             const rows = list.filter(() => shown++ < MAX_ROWS)
-            const descW = Math.max(10, cols - 4 - 9 - 8 - 12 - 2)
+            // 一列＝縮排與圖示 6、描述、時間 9、工具次數 8、最後工具 14（含前面兩格空白）；再留 2 格餘裕，超過面板寬度就會換行
+            const descW = Math.max(10, cols - 6 - 9 - 8 - 14 - 2)
             return (
               <Box key={`ph:${run.runId}:${phase}`} flexDirection="column">
                 <Text dimColor>{`  ${phase}（${done}/${list.length}）`}</Text>
@@ -145,7 +149,7 @@ export function registerAgents(on: On, options: PluginOptions): void {
     return (
       <Box flexDirection="column">
         <Text weight="bold">{`本 session 的代理：子代理 ${agents.length} 個（執行中 ${running}）· 工作流程 ${runs.length} 個（執行中 ${runningRuns}）`}</Text>
-        <Box gap={1}>
+        <Box gap={1} flexWrap="wrap">
           <Button key="refresh" hotkey="r" onPress={() => void refreshAgents($, options)}>重新整理</Button>
           {viewing ? <Button key="back" hotkey="0" onPress={() => void $.ui.view({})}>回到主對話</Button> : null}
         </Box>

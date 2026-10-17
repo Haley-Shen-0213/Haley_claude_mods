@@ -338,7 +338,7 @@ export const register: Register = (on, options) => {
       text:
         `已開啟 ${keys.length} 個面板：${keys.map(k => PANES[k].title).join('、')}。` +
         (waiting ? `\n其中 ${waiting} 個還在等版面空間（終端機太窄，放寬視窗後會自動出現）。` : '') +
-        '\n/cockpit close 一次關閉全部。',
+        '\n面板上方的分頁可以切換；/cockpit close 一次關閉全部。',
     }
   })
 

@@ -6,7 +6,19 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { width } from '../hooks/helpers'
+
 const NOW_S = 1792193000
+
+/** 元素底下所有文字依序串起來：用來算一列在終端機裡佔幾格寬（中文兩格）。 */
+function textOf(node: unknown): string {
+  if (typeof node === 'string') return node
+  if (node !== null && typeof node === 'object') {
+    const kids = (node as { children?: unknown[] }).children
+    return Array.isArray(kids) ? kids.map(textOf).join('') : ''
+  }
+  return ''
+}
 
 const BOARD = {
   now: NOW_S,
@@ -65,7 +77,7 @@ const RUNS = {
   tzOffset: 28800,
   runs: [
     {
-      runId: 'run-1', name: 'audit', summary: '稽核過期規範', taskId: 'wf-1', startedAt: NOW_S - 1600, endedAt: null,
+      runId: 'run-1', name: 'audit-spec-outdated-demo', summary: '稽核過期規範', taskId: 'wf-1', startedAt: NOW_S - 1600, endedAt: null,
       state: 'running', counts: { done: 1, running: 1, stalled: 0, pending: 1 }, total: 3, outputTokens: 12345,
       agents: [
         { id: 'w1', phase: '盤點', description: '讀取規範清單', type: 'general-purpose', state: 'done', startedAt: NOW_S - 1500, lastActivity: NOW_S - 1400, seconds: 100, tools: 5, lastTool: 'Read', outputTokens: 800 },
@@ -334,6 +346,28 @@ test('代理面板：工作流程依階段列出代理，執行中的預設展�
   // 執行中的 run 按一下收合
   await ui.press({ key: 'run:run-1' })
   expect(await ui.find({ type: 'Text', text: /比對引用/ })).toBeUndefined()
+})
+
+test('代理面板在九十欄左右的窄面板不換行：每列寬度不超過 bodyColumns', async ($, on) => {
+  const calls = newCalls()
+  calls.agents = RUNS
+  world(on, calls)
+  on('agent.list', () => ({ value: [{ id: 'a1', description: '搜尋設定', type: 'Explore', status: 'running' as const }] }))
+  await $.command.run(cmd('agent-board'))
+  // 使用者的實機面板約 88 欄；超過寬度時右對齊的欄位會被擠到下一行（驗收截圖看到過）
+  for (const cols of [88, 72]) {
+    const ui = await $.ui.mount({
+      plugin: 'haley-cockpit', surface: 'terminal', component: 'Pane', requestId: 'agent-board',
+      props: { ...paneProps('代理與工作流程'), bodyColumns: cols },
+    })
+    // 熱鍵按鈕（plain Button 前面的「1: 」）會多佔 3 格，標題列按鈕沒有熱鍵
+    for (const [key, extra] of [['wa:w1', 0], ['wa:w2', 0], ['wa:w3', 0], ['run:run-1', 0], ['a:a1', 3]] as const) {
+      const el = await ui.find({ key })
+      expect(el, key).toBeDefined()
+      expect(width(textOf(el)) + extra, `${key} 在 ${cols} 欄`).toBeLessThanOrEqual(cols)
+    }
+    await ui.unmount()
+  }
 })
 
 test('檔案樹：預設略過 .git，點資料夾展開，點檔名複製絕對或相對路徑', async ($, on) => {

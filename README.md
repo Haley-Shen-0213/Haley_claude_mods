@@ -25,14 +25,14 @@
 
 | 指令 | 面板內容 |
 |---|---|
-| `/cockpit` | 一次開啟全部六個面板（並排或分頁的方式由 Claude Code 決定，視終端機寬度而定）；`/cockpit close` 一次關閉。 |
+| `/cockpit` | 一次開啟全部六個面板（面板上方有分頁可切換）；`/cockpit close` 一次關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
 | `/go` | 不帶參數：列出編號的 session 清單；`/go 3` 依編號、`/go 名稱` 依名稱（部分比對）切到那個 session 的終端機。編號依 session 啟動時間排，和狀態列清單、各面板相同，不會因狀態變動而跳號。 |
-| `/session-board` | 頂端是 Claude 5 小時／7 天、模型專屬額度（例如 Fable）與 Codex 額度的彩色進度條、重置倒數與近期走勢。下方是本機每個 Claude 與 Codex session 一列：狀態（執行中／閒置／停滯）、名稱、任務標題、迷你進度條與預估剩餘時間、context 使用比例、本回合已執行多久、最後動作距今。每 5 秒更新。點一列（或在面板內按 1～9）切到該 session 的終端機：在 VS Code 裡的切 VS Code 的終端機分頁（需要配套擴充），在 Windows Terminal 裡的選取對應分頁並把視窗帶到前景。沒有待辦清單但有工作流程在跑的 session，進度條改用「代理 完成數／總數」。 |
-| `/agent-board` | 本 session 的子代理，以及工作流程（Workflow 工具）派出的代理。工作流程依階段分組，顯示整體進度條、每個代理的描述、狀態、已執行時間、工具次數與最後使用的工具；執行中的預設展開、已完成的預設收合，點標題列切換。子代理：點一列就在主畫面檢視那個子代理的對話。 |
-| `/edit-heatmap` | 本 session 各檔案被 Edit／Write 成功修改的次數排行。從 session 紀錄檔重建，mod 重新載入也不會歸零；可切換成「所有存活的 session」。 |
-| `/turn-timeline` | 本 session 每個回合的開始時間、耗時長條、輸出 token、API 呼叫數、工具次數，以及是否中斷或以錯誤結束。 |
-| `/worktree-map` | 目前 repo 的 git worktree：路徑、分支、HEAD、鎖定或可清除狀態，並標出本 session 所在的那一個。 |
-| `/file-tree` | 專案檔案樹：點資料夾展開或收合；點檔名（或每列右側的「複製」）把路徑複製到剪貼簿，可在「絕對路徑」與「相對於根目錄」之間切換；可上一層、回專案根目錄、複製根目錄。預設略過 `.git`、`node_modules` 等大型資料夾，按「顯示全部」可看到。 |
+| `/session-board` | 頂端是 Claude 5 小時／7 天、模型專屬額度（例如 Fable）與 Codex 額度的彩色進度條、重置倒數與近期走勢。下方是本機每個 Claude 與 Codex session 一列：狀態（執行中／閒置／停滯）、名稱、任務標題、迷你進度條與預估剩餘時間、context 使用比例、本回合已執行多久、最後動作距今。每 5 秒更新。點一列（或在面板內按 1～9）切到該 session 的終端機：在 VS Code 裡的切 VS Code 的終端機分頁（需要配套擴充），在 Windows Terminal 裡的選取對應分頁並把視窗帶到前景。沒有待辦清單但有工作流程在跑的 session，進度條改用「代理 完成數／總數」。<br><br><img src="docs/acceptance/03-session-board.png" alt="/session-board：帳號用量與 session 清單" width="720"> |
+| `/agent-board` | 本 session 的子代理，以及工作流程（Workflow 工具）派出的代理。工作流程依階段分組，顯示整體進度條、每個代理的描述、狀態、已執行時間、工具次數與最後使用的工具；執行中的預設展開、已完成的預設收合，點標題列切換。子代理：點一列就在主畫面檢視那個子代理的對話。<br><br><img src="docs/acceptance/04-agent-board.png" alt="/agent-board：工作流程的代理清單" width="720"> |
+| `/edit-heatmap` | 本 session 各檔案被 Edit／Write 成功修改的次數排行。從 session 紀錄檔重建，mod 重新載入也不會歸零；可切換成「所有存活的 session」。<br><br><img src="docs/acceptance/05-edit-heatmap.png" alt="/edit-heatmap：編輯熱點" width="720"> |
+| `/turn-timeline` | 本 session 每個回合的開始時間、耗時長條、輸出 token、API 呼叫數、工具次數，以及是否中斷或以錯誤結束。<br><br><img src="docs/acceptance/06-turn-timeline.png" alt="/turn-timeline：回合時間軸" width="720"> |
+| `/worktree-map` | 目前 repo 的 git worktree：路徑、分支、HEAD、鎖定或可清除狀態，並標出本 session 所在的那一個。<br><br><img src="docs/acceptance/07-worktree-map.png" alt="/worktree-map：git worktree 對照" width="720"> |
+| `/file-tree` | 專案檔案樹：點資料夾展開或收合；點檔名（或每列右側的「複製」）把路徑複製到剪貼簿，可在「絕對路徑」與「相對於根目錄」之間切換；可上一層、回專案根目錄、複製根目錄。預設略過 `.git`、`node_modules` 等大型資料夾，按「顯示全部」可看到。<br><br><img src="docs/acceptance/02-file-tree.png" alt="/file-tree：專案檔案樹" width="720"> |
 
 狀態列（選用，`haley-cockpit/collector/statusline.py`）：
 
@@ -46,19 +46,17 @@ ctx ███▍░░░░░░ 34% · $3.42 │ session 5：執行中 3 · �
 
 ### 判斷規則
 
-- **執行中**：Claude 是 `~/.claude/sessions/<pid>.json` 的狀態為 busy；Codex 是最後一個任務事件為 `task_started`。
-- **停滯**：執行中，但超過門檻（預設 10 分鐘，可在 `/config` 調整）沒有任何新紀錄。執行很久的指令（例如長時間的測試）也會被標成停滯，面板會同時顯示正在等哪個工具。
-- **閒置**：正在等使用者輸入。
-- **預估剩餘時間**：只在 session 有待辦清單時估算（Claude 的 TodoWrite／TaskCreate、Codex 的計畫步驟）：剩餘 ≈ 已耗時 ÷ 已完成 × 未完成。沒有清單時顯示「無計畫」。
-- **Codex 的對應方式**：Codex 的紀錄檔不記錄程序編號，所以用「codex.exe 啟動時間與 rollout 檔名時間相差 15 秒內」來對應。用 `codex resume` 接續的舊 session 可能對應不到，會顯示「未對應」。
-- **Claude 用量**：每個 session 只知道自己最近一次 API 回應時的數字。本工具把各 session 看到的值合併（同一個計量視窗取最大值），所以只要任何一個 session 收到新回應，所有面板與狀態列都會更新。
-- **標題**：Claude 取自紀錄檔裡 Claude Code 自己產生的標題（`ai-title`，終端機分頁上看到的就是它；用 `/rename` 取過名字的以自訂名稱為準）。登記檔裡的 `myproject-8e` 這類名稱是自動代號，不是標題，只在還沒有任何對話時當備用。Codex 取自 `~/.codex/session_index.jsonl` 的 thread 名稱。在 VS Code 終端機裡的 session，名稱改用你在分頁上看到的終端機名稱（需要 VS Code 擴充），標題則放在任務欄。
-- **context 比例**：以 session 紀錄檔裡最後一次請求的輸入 token（含快取）除以視窗大小，算法與官方狀態列相同；視窗大小（例如 100 萬）由各 session 的狀態列回報。不直接採用官方狀態列給閒置 session 的值，因為剛壓縮（`/compact`）完、下一次請求之前，它會把「未知」顯示成 0%（實測：花費上百美元的 session 也是 0%）。這種剛壓縮完的 session，本工具的 context 欄位留白，直到下一次請求。Codex 用 rollout 裡 token 事件的最近一次請求與視窗大小計算。
-- **不在終端機裡的 session**：登記檔的 `entrypoint` 不是 `cli` 的 Claude session（例如 VS Code 的 Claude 面板在背景開的）不在任何終端機裡，點了也切不過去，所以不列進總覽，也不算進 session 數。
-- **編號**：所有 session 依啟動時間排序後固定編號（同時啟動時依程序編號），與狀態無關。`/go` 的編號、狀態列清單、各面板的列首編號是同一套。
-- **工作流程的代理**：官方的子代理清單不含工作流程（Workflow 工具）派出的代理（Claude Code 畫面底部另外顯示「工作流程 8/16」），所以本工具直接讀 `~/.claude/projects/<專案>/<session>/subagents/workflows/<run>/` 底下各代理的描述檔（`agent-*.meta.json`：類型、描述、階段）與對話紀錄（`agent-*.jsonl`）。對話紀錄的最後一列是「結束回合的工具」的結果即視為完成；超過停滯門檻沒有新紀錄標為停滯；有描述檔但還沒有紀錄的標為待開始。工作流程的名稱與說明取自母 session 紀錄檔裡該次 Workflow 工具的回傳（剛啟動、還沒寫入時先用 run 編號代替）。
-- **模型專屬額度（例如 Fable）**：Claude Code 傳給狀態列的資料只有 5 小時與 7 天兩個總額度，沒有各模型的額度。本工具在狀態列或面板執行時，於背景每 5 分鐘執行一次官方的 `claude -p --no-session-persistence --model haiku /usage`，解析它印出的「Current week (Fable)」這類行。`/usage` 是 Claude Code 自己的內建指令，不會寫入 session 紀錄；查詢期間官方程式會暫時在 `~/.claude/sessions/` 留一筆 `entrypoint` 為 `sdk-cli` 的登記，不會列進總覽。帳號沒有這類額度時，這一列不會出現。
-- **切換到 Windows Terminal 裡的 session**：靠分頁名稱對應，依序嘗試：①分頁名稱與 session 標題相符（忽略 Claude Code 畫在標題最前面會一直變的狀態符號與大小寫；還沒有對話的新 session，分頁固定叫「Claude Code」）；②你自己改過分頁名稱、標題比不到時，用排除法：同在 Windows Terminal 的其他 session 都對上分頁後，剩下唯一的分頁就是它；③仍無法確定，且還沒對上的 session 數與剩下的分頁數剛好相同時，依啟動順序對應分頁順序（會註明「可能不準」）；④都不成立就回報找不到並列出目前的分頁名稱，不亂選。限制：只認 Windows Terminal 的分頁，舊式命令提示字元視窗無法切換；Windows 不允許背景程式搶前景，視窗有時只會讓工作列閃爍而沒真正跳到最前面（會告知）；分頁名稱以 UI Automation 讀取，只在你點選切換時執行一次。
+- **執行中／閒置**：Claude 看 `~/.claude/sessions/<pid>.json` 的狀態；Codex 看最後一個任務事件是不是 `task_started`。
+- **停滯**：執行中，但超過門檻（預設 10 分鐘，可在 `/config` 調整）沒有新紀錄。
+- **預估剩餘時間**：有待辦清單時，依「已耗時 ÷ 已完成 × 未完成」估算；沒有清單顯示「無計畫」。沒有清單但有工作流程在跑時，進度改看代理的完成數。
+- **名稱與標題**：Claude 取自紀錄檔裡 Claude Code 自己產生的標題，`/rename` 取過名字的以自訂名稱為準；在 VS Code 終端機裡的 session，名稱用終端機分頁名稱（需要 VS Code 擴充）。Codex 取自 `~/.codex/session_index.jsonl` 的 thread 名稱。
+- **context 比例**：最後一次請求的輸入 token（含快取）除以視窗大小，與官方狀態列同一算法；剛 `/compact` 完、下一次請求之前留白。
+- **用量**：每個 session 只知道自己最近一次回應時的數字，本工具把各 session 的值合併（同一計量視窗取最大值）。Fable 這類模型專屬額度，由背景定期執行官方 `/usage` 取得（見免責聲明第 4 點）。
+- **工作流程的代理**：官方的子代理清單不含工作流程派出的代理，所以直接讀 session 資料夾底下各代理的描述檔與對話紀錄；最後一列是結束回合的結果就算完成。
+- **Codex 的對應**：Codex 紀錄檔沒有程序編號，改用「codex.exe 啟動時間與 rollout 檔名時間相差 15 秒內」對應；用 `codex resume` 接續的舊 session 可能對應不到。
+- **編號**：依 session 啟動時間固定編號，與狀態無關；`/go`、狀態列、各面板是同一套。
+- **不列入總覽的 session**：不在終端機裡的（例如 VS Code 的 Claude 面板在背景開的），點了也切不過去。
+- **切換 Windows Terminal 分頁**：依分頁名稱對應 session 標題；分頁被改過名時用排除法或啟動順序推定（會註明），推定不出唯一一個就不切。只認 Windows Terminal；Windows 不允許背景程式搶前景，視窗不一定能自動帶到最前面。
 
 ### 需求
 
