@@ -40,11 +40,30 @@ def attach_terminals(rows, names):
 
 
 def attach_claude_ctx(rows):
+    """Claude 的 context 比例。官方狀態列對閒置的 session 常回報 0%（實測：花費上百美元的 session 也是 0%），
+    所以以紀錄檔最後一次請求的輸入 token 數為準，除以狀態列回報的視窗大小（只有 Claude Code 知道，依模型而異）；
+    紀錄檔沒有數字時（例如剛壓縮完），只有執行中的 session 才採用狀態列的即時值，閒置的不顯示。"""
     for r in rows:
-        if r.get("tool") == "claude" and r.get("id"):
-            doc = common.read_json(os.path.join(common.CTX_DIR, f"{r['id']}.json"))
-            if isinstance(doc, dict) and doc.get("pct") is not None:
-                r["ctx"] = {"pct": doc.get("pct"), "at": doc.get("at")}
+        tokens = r.pop("ctxTokens", None)
+        if r.get("tool") != "claude" or not r.get("id"):
+            continue
+        doc = common.read_json(os.path.join(common.CTX_DIR, f"{r['id']}.json"))
+        doc = doc if isinstance(doc, dict) else {}
+        size = doc.get("size")
+        if tokens and size:
+            r["ctx"] = {"pct": round(min(100.0, 100.0 * tokens / size), 1), "at": r.get("lastActivity"),
+                        "tokens": tokens, "size": size}
+        elif doc.get("pct") is not None and r.get("state") in ("running", "stalled"):
+            r["ctx"] = {"pct": doc.get("pct"), "at": doc.get("at")}
+
+
+def split_non_terminal(rows):
+    """登記檔的 entrypoint 不是 cli 的 session（例如 VS Code 的 Claude 面板在背景開的）不在任何終端機裡，
+    點了也切不過去：不列進總覽、不算進 session 數，另外回傳給需要的介面。"""
+    keep, others = [], []
+    for r in rows:
+        (others if r.get("entrypoint") not in (None, "cli") else keep).append(r)
+    return keep, others
 
 
 def collect(detail=False, stall_override=None, with_sparks=False):
@@ -63,12 +82,14 @@ def collect(detail=False, stall_override=None, with_sparks=False):
     rows.sort(key=lambda r: (STATE_ORDER.get(r["state"], 2), r["tool"], r.get("project") or ""))
     attach_terminals(rows, terminal_names(now_ts))
     attach_claude_ctx(rows)
+    rows, others = split_non_terminal(rows)
     snap = usage.snapshot(now_ts)
     usage.append_history(snap, now_ts)
     counts = {"running": 0, "idle": 0, "stalled": 0, "unknown": 0}
     for r in rows:
         counts[r["state"] if r["state"] in counts else "unknown"] += 1
     out = {"now": now_ts, "tzOffset": tz_offset(), "stallMinutes": stall_min, "sessions": rows, "counts": counts,
+           "others": [{k: r.get(k) for k in ("tool", "pid", "entrypoint", "state", "project")} for r in others],
            "usage": snap}
     if with_sparks:
         primary = ((snap.get("codex") or {}).get("primary") or {})

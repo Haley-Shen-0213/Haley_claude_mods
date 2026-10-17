@@ -47,6 +47,8 @@ ctx ███▍░░░░░░ 34% · $3.42 │ session 7：執行中 1 · �
 - **預估剩餘時間**：只在 session 有待辦清單時估算（Claude 的 TodoWrite／TaskCreate、Codex 的計畫步驟）：剩餘 ≈ 已耗時 ÷ 已完成 × 未完成。沒有清單時顯示「無計畫」。
 - **Codex 的對應方式**：Codex 的紀錄檔不記錄程序編號，所以用「codex.exe 啟動時間與 rollout 檔名時間相差 15 秒內」來對應。用 `codex resume` 接續的舊 session 可能對應不到，會顯示「未對應」。
 - **Claude 用量**：每個 session 只知道自己最近一次 API 回應時的數字。本工具把各 session 看到的值合併（同一個計量視窗取最大值），所以只要任何一個 session 收到新回應，所有面板與狀態列都會更新。
+- **context 比例**：以 session 紀錄檔裡最後一次請求的輸入 token（含快取）除以視窗大小，算法與官方狀態列相同；視窗大小（例如 100 萬）由各 session 的狀態列回報。不直接採用官方狀態列給閒置 session 的值，因為剛壓縮（`/compact`）完、下一次請求之前，它會把「未知」顯示成 0%（實測：花費上百美元的 session 也是 0%）。這種剛壓縮完的 session，本工具的 context 欄位留白，直到下一次請求。Codex 用 rollout 裡 token 事件的最近一次請求與視窗大小計算。
+- **不在終端機裡的 session**：登記檔的 `entrypoint` 不是 `cli` 的 Claude session（例如 VS Code 的 Claude 面板在背景開的）不在任何終端機裡，點了也切不過去，所以不列進總覽，也不算進 session 數。
 
 ### 需求
 
@@ -130,8 +132,12 @@ claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_m
 ```
 claude plugin validate haley-cockpit
 claude plugin test haley-cockpit
+python -X utf8 -B -m unittest discover -s haley-cockpit/collector/tests -v
+node vscode-session-switch/test/lib-test.js
 node vscode-session-switch/test/run-test.js
 ```
+
+測試資料一律用虛構名稱；測試不會碰真正的用量快取（資料夾導到暫存區，結束時刪除）。
 
 每個原始碼檔第一行的「路徑」相對於該元件自己的資料夾（`haley-cockpit/` 或 `vscode-session-switch/`）。
 

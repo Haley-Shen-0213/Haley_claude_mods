@@ -9,7 +9,7 @@ from . import common
 
 SESSIONS_DIR = os.path.join(common.CLAUDE_DIR, "sessions")
 PROJECTS_DIR = os.path.join(common.CLAUDE_DIR, "projects")
-CACHE_VERSION = 1
+CACHE_VERSION = 2  # 2：快取多存最後一次請求的 token 數（算 context 比例），舊快取重新解析一次
 # 斜線指令與本機指令的輸出也以 user 列寫入，但不是使用者開的新回合
 LOCAL_PREFIX = ("<command-name>", "<local-command-stdout>", "<local-command-caveat>",
                 "<command-message>", "<local-command-stderr>")
@@ -142,7 +142,7 @@ def tail_state(path):
 def _new_state(path):
     return {"v": CACHE_VERSION, "path": path, "offset": 0, "turns": [], "req": None, "pending": {},
             "edits": {}, "todos": None, "tasks": {}, "taskCreates": {}, "planStart": None, "planKind": None,
-            "lastTs": None, "lastErr": False}
+            "lastTs": None, "lastErr": False, "ctxTokens": None}
 
 
 def _close_request(st):
@@ -178,6 +178,9 @@ def _feed(st, o):
     if ts and (st["lastTs"] is None or ts > st["lastTs"]):
         st["lastTs"] = ts
     turn = st["turns"][-1] if st["turns"] else None
+    # 壓縮（/compact）之後，到下一次 API 回應之前，不知道 context 用了多少：先清掉，不要沿用壓縮前那一次的數字
+    if o.get("isCompactSummary") or (kind == "system" and o.get("subtype") == "compact_boundary"):
+        st["ctxTokens"] = None
     if kind == "user":
         if is_turn_start(o):
             _close_request(st)
@@ -231,6 +234,10 @@ def _feed(st, o):
                 + int(usage.get("cache_read_input_tokens") or 0)
             st["req"]["out"] = max(st["req"]["out"], int(usage.get("output_tokens") or 0))
             st["req"]["inp"] = max(st["req"]["inp"], inp)
+            # 最後一次請求送出的輸入 token（含快取）就是當下 context 的大小，與官方狀態列的算法相同（只算輸入）；
+            # 錯誤訊息列的用量是 0，不覆蓋
+            if st["req"]["inp"] > 0:
+                st["ctxTokens"] = st["req"]["inp"]
         for b in msg.get("content") or []:
             if not isinstance(b, dict) or b.get("type") != "tool_use":
                 continue
@@ -367,9 +374,12 @@ def collect(procs, now_ts, stall_s, detail=False):
                "project": common.project_name(s.get("cwd")), "title": s.get("name") or "", "state": state,
                "rawStatus": raw, "since": since, "lastActivity": last, "pendingTools": tail["pendingTools"],
                "lastError": tail["lastError"], "startedAt": (s.get("startedAt") or 0) / 1000 or None,
-               "version": s.get("version"), "transcript": path}
+               "version": s.get("version"), "transcript": path,
+               # cli＝在終端機裡開的；claude-vscode 等＝別的程式（例如 VS Code 的 Claude 面板）在背景開的，不在任何終端機裡
+               "entrypoint": s.get("entrypoint")}
         if detail and path:
             st = analyze(path, sid)
+            row["ctxTokens"] = st.get("ctxTokens")
             row["plan"] = plan_view(st, now_ts)
             turns = st.get("turns") or []
             row["turnCount"] = len(turns)

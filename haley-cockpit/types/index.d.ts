@@ -33,8 +33,11 @@ export type CockpitSession = {
   terminalIndex?: number | null
   window?: string
   /** context 使用比例：Claude 取自該 session 狀態列的回報，Codex 取自 rollout 的 token 事件 */
-  ctx?: { pct: number | null; at: number | null } | null
+  ctx?: { pct: number | null; at: number | null; tokens?: number; size?: number } | null
 }
+
+/** 不在終端機裡的 session（例如 VS Code 的 Claude 面板在背景開的）：不列進總覽，只告知有幾個 */
+export type CockpitOther = { tool: string; pid: number; entrypoint: string | null; state: string; project: string }
 
 export type CockpitSparks = { c5: (number | null)[]; c7: (number | null)[]; x1: (number | null)[] }
 
@@ -44,6 +47,7 @@ export type CockpitBoard = {
   stallMinutes: number
   sessions: CockpitSession[]
   counts: { running: number; idle: number; stalled: number; unknown: number }
+  others?: CockpitOther[]
   usage: CockpitUsage
   sparks?: CockpitSparks
 }
