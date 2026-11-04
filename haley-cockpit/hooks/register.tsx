@@ -1,8 +1,8 @@
 // 路徑： hooks\register.tsx
-// haley-cockpit 駕駛艙：/session-board、/edit-heatmap、/agent-board、/turn-timeline、/worktree-map、/file-tree 六個面板，
+// haley-cockpit 駕駛艙：/session-board、/edit-heatmap、/read-map、/agent-board、/turn-timeline、/worktree-map、/file-tree 七個面板，
 // /cockpit 一次開啟全部，/go 依編號或名稱切到某個 session；同一個 mod 共用讀取程式與設定。
 // session 紀錄檔交給 collector\cockpit_cli.py 解析：mod 的環境一次只能讀 4 MiB，紀錄檔動輒十幾 MB；狀態列也用同一份 Python 程式，兩邊數字一致。
-// 子代理與工作流程的面板在 agents.tsx，檔案樹在 filetree.tsx；共用的排版與呼叫收集程式的函式在 helpers.ts。
+// 子代理與工作流程的面板在 agents.tsx，讀取紀錄在 reads.tsx，檔案樹在 filetree.tsx；共用的排版與呼叫收集程式的函式在 helpers.ts。
 import { atom, read, update } from 'claude-code'
 import type { Color, PluginOptions, Register, Timer } from 'claude-code'
 
@@ -18,6 +18,7 @@ import type {
 } from '../types'
 import { noteAgentEnd, refreshAgents, registerAgents } from './agents'
 import { refreshTree, registerTree } from './filetree'
+import { refreshReads, registerReads } from './reads'
 import {
   EMPTY, ago, bar, clockText, cockpitDir, count, fetchOnce, fit, level, merge, right, runCli, shortPath, span, spark, stallMinutes, toolName,
 } from './helpers'
@@ -33,6 +34,7 @@ const PANES = {
   board: { id: 'session-board', title: 'Session 總覽' },
   agents: { id: 'agent-board', title: '代理與工作流程' },
   edits: { id: 'edit-heatmap', title: '編輯熱點' },
+  reads: { id: 'read-map', title: '讀取紀錄' },
   turns: { id: 'turn-timeline', title: '回合時間軸' },
   worktrees: { id: 'worktree-map', title: 'Worktree' },
   tree: { id: 'file-tree', title: '專案檔案樹' },
@@ -256,6 +258,7 @@ function schedule($: Dollar, key: PaneKey, ms: number, fn: () => Promise<void> |
 function startFor($: Dollar, key: PaneKey, options: PluginOptions): Promise<void> {
   if (key === 'board') return schedule($, key, BOARD_MS, () => refreshBoard($, options))
   if (key === 'edits') return schedule($, key, SLOW_MS, () => refreshEdits($, options))
+  if (key === 'reads') return schedule($, key, SLOW_MS, () => refreshReads($, options))
   if (key === 'turns') return schedule($, key, SLOW_MS, () => refreshTurns($, options))
   // 子代理清單的「已執行時間」每次重畫才會走動，所以資料沒變也要定期重畫
   if (key === 'agents') return schedule($, key, AGENT_MS, async () => { await refreshAgents($, options); $.ui.invalidate('ui.render') })
@@ -291,11 +294,12 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     // 逐個登記並各自攔錯：萬一某個名稱和內建指令撞名而被拒絕，不能連累其他指令與整個 session.start
     const commands: { name: string; description: string; argumentHint?: string }[] = [
-      { name: 'cockpit', description: '一次開啟全部駕駛艙面板（Session 總覽、代理、編輯熱點、回合時間軸、Worktree、專案檔案樹）；加 close 全部關閉', argumentHint: '[close]' },
+      { name: 'cockpit', description: '一次開啟全部駕駛艙面板（Session 總覽、代理、編輯熱點、讀取紀錄、回合時間軸、Worktree、專案檔案樹）；加 close 全部關閉', argumentHint: '[close]' },
       { name: 'go', description: '依編號或名稱切到某個 session 的終端機；不帶參數時列出編號', argumentHint: '[編號或名稱]' },
       { name: 'session-board', description: '所有 Claude／Codex session 的狀態、進度與帳號用量（每 5 秒更新；點一列切到該終端機）' },
       { name: 'agent-board', description: '本 session 的子代理與工作流程派出的代理：階段、描述、狀態、已執行時間' },
       { name: 'edit-heatmap', description: '本 session 各檔案被 Edit／Write 成功修改的次數（從紀錄檔重建）' },
+      { name: 'read-map', description: '本 session 讀了哪些檔案：開場自動載入、Read 涵蓋行數、Bash／PowerShell 推測（含子代理）' },
       { name: 'turn-timeline', description: '本 session 每回合的耗時、輸出 token、API 呼叫與工具次數' },
       { name: 'worktree-map', description: '目前 repo 的 git worktree：路徑、分支、鎖定狀態' },
       { name: 'file-tree', description: '專案檔案樹：展開資料夾、點一下複製路徑（絕對或相對）' },
@@ -315,7 +319,7 @@ export const register: Register = (on, options) => {
   })
 
   const single: [string, PaneKey][] = [
-    ['session-board', 'board'], ['agent-board', 'agents'], ['edit-heatmap', 'edits'],
+    ['session-board', 'board'], ['agent-board', 'agents'], ['edit-heatmap', 'edits'], ['read-map', 'reads'],
     ['turn-timeline', 'turns'], ['worktree-map', 'worktrees'], ['file-tree', 'tree'],
   ]
   for (const [command, key] of single) {
@@ -382,11 +386,13 @@ export const register: Register = (on, options) => {
       // 主對話的回合結束時，開著的時間軸與熱點順手更新，不必等 30 秒
       if (timers.has('turns')) void refreshTurns($, options)
       if (timers.has('edits')) void refreshEdits($, options)
+      if (timers.has('reads')) void refreshReads($, options)
     }
     return next(e)
   })
 
   registerAgents(on, options)
+  registerReads(on, options)
   registerTree(on)
 
   // ---- /session-board ----

@@ -1,8 +1,9 @@
 # 路徑： collector\cockpit_cli.py
-# 駕駛艙資料的命令列出口，給 haley-cockpit mod 呼叫：board／edits／turns 三種查詢，結果以一行 JSON 印到 stdout。
+# 駕駛艙資料的命令列出口，給 haley-cockpit mod 呼叫：board／edits／turns／reads／agents 等查詢，結果以一行 JSON 印到 stdout。
 # mod 在自己的環境裡不能讀超過 4 MiB 的檔案，session 紀錄檔動輒十幾 MB，所以解析交給這支程式。
 import argparse
 import json
+import os
 import sys
 
 from cockpit import board, claude_sessions, common, usage, usage_fetch, workflows
@@ -52,6 +53,18 @@ def cmd_turns(args):
     return {"now": common.now(), "tzOffset": board.tz_offset(), "turns": claude_sessions.turn_rows(st, busy, common.now())}
 
 
+def cmd_reads(args):
+    """這個 session（含子代理）讀了哪些檔：開場自動載入、Read 工具、Bash／PowerShell 推測、搜尋次數。"""
+    found = _session_paths(args.session, False)
+    base = {"now": common.now(), "tzOffset": board.tz_offset()}
+    if not found:
+        return {**base, "loaded": [], "files": [], "total": 0, "shell": [], "searches": {}, "agents": 0, "error": "找不到這個 session 的紀錄檔"}
+    sid, _, path, _ = found[0]
+    main = claude_sessions.analyze(path, sid)
+    subs = [claude_sessions.analyze(p, f"{sid}-{os.path.basename(p)[:-6]}", sub=True) for p in claude_sessions.subagent_transcripts(path)]
+    return {**base, **claude_sessions.read_view(main, subs)}
+
+
 def cmd_agents(args):
     """這個 session 的工作流程（Workflow 工具）與它們派出的代理：官方的子代理清單不含這些。"""
     found = _session_paths(args.session, False)
@@ -74,6 +87,8 @@ def main():
     e = sub.add_parser("edits", help="編輯熱點")
     e.add_argument("--session", action="append")
     e.add_argument("--all", action="store_true", help="所有存活的 Claude session")
+    r = sub.add_parser("reads", help="讀取紀錄")
+    r.add_argument("--session", action="append", required=True)
     t = sub.add_parser("turns", help="回合時間軸")
     t.add_argument("--session", action="append", required=True)
     sub.add_parser("usage-refresh", help="背景重抓各模型的額度（執行官方 /usage 並解析；一般由總覽自動觸發）")
@@ -92,6 +107,8 @@ def main():
         result = cmd_edits(args)
     elif args.cmd == "agents":
         result = cmd_agents(args)
+    elif args.cmd == "reads":
+        result = cmd_reads(args)
     else:
         result = cmd_turns(args)
     sys.stdout.reconfigure(encoding="utf-8")

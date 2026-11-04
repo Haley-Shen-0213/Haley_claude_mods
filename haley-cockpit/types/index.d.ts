@@ -70,6 +70,20 @@ export type CockpitBoard = {
 export type CockpitEdit = { path: string; count: number; lastAt: number | null; sessions: number }
 export type CockpitEdits = { now: number; tzOffset: number; files: CockpitEdit[]; total: number }
 
+/** 一個被 Read 工具讀過的檔案。complete：true＝讀完、false＝只讀部分、null＝沒有行數資訊 */
+export type CockpitReadFile = { path: string; count: number; lastAt: number | null; total: number | null; lines: number; complete: boolean | null; main: boolean }
+export type CockpitReads = {
+  now: number
+  tzOffset: number
+  loaded: { path: string; type: string; at: number | null }[]
+  files: CockpitReadFile[]
+  total: number
+  shell: { path: string; count: number; lastAt: number | null }[]
+  searches: Record<string, number>
+  agents: number
+  error?: string
+}
+
 export type CockpitTurn = {
   index: number
   start: number | null
@@ -140,6 +154,7 @@ declare module 'claude-code' {
       board: CockpitLoad<CockpitBoard>
       edits: CockpitLoad<CockpitEdits>
       editsAll: boolean
+      reads: CockpitLoad<CockpitReads>
       turns: CockpitLoad<CockpitTurns>
       worktrees: CockpitLoad<CockpitWorktrees>
       agentTimes: Record<string, CockpitAgentTime>

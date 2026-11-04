@@ -1,6 +1,6 @@
 // 路徑： tests\register.test.ts
 // haley-cockpit 行為測試（claude plugin test）：總覽面板（進度、Fable 用量、點一列切換）、/go、/cockpit、
-// 代理面板的工作流程、專案檔案樹、worktree 解析、子代理檢視。
+// 代理面板的工作流程、讀取紀錄、專案檔案樹、worktree 解析、子代理檢視。
 // 收集器（Python）、切換程式（PowerShell）與檔案系統都用掛鉤假造：測試環境沒有 fs、process，引擎底下沒人回答的呼叫會直接丟錯。
 // $ 上的呼叫在掛鉤裡以 { value } 回答（OpEventResult）。
 import { expect, mock, test } from 'claude-code/testing'
@@ -95,6 +95,21 @@ const RUNS = {
   ],
 }
 
+const READS = {
+  now: NOW_S,
+  tzOffset: 28800,
+  loaded: [{ path: 'C:\\Users\\tester\\.claude\\CLAUDE.md', type: 'User', at: NOW_S - 900 }, { path: 'D:\\work\\alpha\\CLAUDE.md', type: 'Project', at: NOW_S - 900 }],
+  files: [
+    { path: 'D:\\work\\alpha\\docs\\規格.md', count: 2, lastAt: NOW_S - 60, total: 300, lines: 120, complete: false, main: true },
+    { path: 'D:\\work\\alpha\\README.md', count: 1, lastAt: NOW_S - 120, total: 40, lines: 40, complete: true, main: false },
+    { path: 'D:\\work\\alpha\\圖.png', count: 1, lastAt: NOW_S - 200, total: null, lines: 0, complete: true, main: true },
+  ],
+  total: 4,
+  shell: [{ path: 'src/main.py', count: 3, lastAt: NOW_S - 30 }],
+  searches: { Grep: 7, Glob: 2 },
+  agents: 1,
+}
+
 type Entry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number; isLink: boolean }
 
 type Calls = {
@@ -169,6 +184,7 @@ function world(on: On, calls: Calls): void {
     if (e.argv.includes('board')) return ran(0, JSON.stringify(BOARD))
     if (e.argv.includes('agents')) return ran(0, JSON.stringify(calls.agents))
     if (e.argv.includes('edits')) return ran(0, JSON.stringify({ now: NOW_S, tzOffset: 28800, files: [], total: 0 }))
+    if (e.argv.includes('reads')) return ran(0, JSON.stringify(READS))
     if (e.argv.includes('turns')) return ran(0, JSON.stringify({ now: NOW_S, tzOffset: 28800, turns: [] }))
     if (e.argv[0] === 'git') return ran(0, PORCELAIN)
     if (e.argv[0] === 'powershell') return ran(0, calls.ps)
@@ -286,11 +302,38 @@ test('/cockpit 一次開啟全部面板，close 全部關閉', async ($, on) => 
   const calls = newCalls()
   world(on, calls)
   const out = await $.command.run(cmd('cockpit'))
-  expect(out.text ?? '').toContain('已開啟 6 個面板')
-  expect([...calls.opened].sort()).toEqual(['agent-board', 'edit-heatmap', 'file-tree', 'session-board', 'turn-timeline', 'worktree-map'])
+  expect(out.text ?? '').toContain('已開啟 7 個面板')
+  expect(out.text ?? '').toContain('讀取紀錄')
+  expect([...calls.opened].sort()).toEqual(['agent-board', 'edit-heatmap', 'file-tree', 'read-map', 'session-board', 'turn-timeline', 'worktree-map'])
   const closed = await $.command.run(cmd('cockpit', 'close'))
   expect(closed.text ?? '').toContain('已關閉全部')
-  expect([...calls.closed].sort()).toEqual(['agent-board', 'edit-heatmap', 'file-tree', 'session-board', 'turn-timeline', 'worktree-map'])
+  expect([...calls.closed].sort()).toEqual(['agent-board', 'edit-heatmap', 'file-tree', 'read-map', 'session-board', 'turn-timeline', 'worktree-map'])
+})
+
+test('讀取紀錄面板：列出開場載入、Read 涵蓋行數、推測讀檔與搜尋次數，窄面板不換行', async ($, on) => {
+  const calls = newCalls()
+  world(on, calls)
+  await $.command.run(cmd('read-map'))
+  expect(calls.argv.some(a => a.includes('reads') && a.includes('self-id'))).toBe(true)
+  const ui = await $.ui.mount({ plugin: 'haley-cockpit', surface: 'terminal', component: 'Pane', requestId: 'read-map', props: paneProps('讀取紀錄') })
+  expect(await ui.find({ type: 'Text', text: /開場自動載入 2 檔/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /使用者層/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Read 工具 3 檔、4 次（1 檔只讀部分）/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /120\/300 行/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /README\.md（子代理）/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Bash／PowerShell 推測 1 檔/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Grep 7 次、Glob 2 次/ })).toBeDefined()
+  await ui.unmount()
+  const narrow = await $.ui.mount({
+    plugin: 'haley-cockpit', surface: 'terminal', component: 'Pane', requestId: 'read-map',
+    props: { ...paneProps('讀取紀錄'), bodyColumns: 72 },
+  })
+  for (const key of ['f:D:\\work\\alpha\\docs\\規格.md', 's:src/main.py', 'l:D:\\work\\alpha\\CLAUDE.md']) {
+    const el = await narrow.find({ key })
+    expect(el, key).toBeDefined()
+    expect(width(textOf(el)), key).toBeLessThanOrEqual(72)
+  }
+  await narrow.unmount()
 })
 
 test('worktree 面板解析 porcelain 並標出目前所在', async ($, on) => {

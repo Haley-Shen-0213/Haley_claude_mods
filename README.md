@@ -4,7 +4,7 @@
 
 | 資料夾 | 是什麼 |
 |---|---|
-| [`haley-cockpit/`](haley-cockpit/) | Claude Code mod「駕駛艙」：本機所有 Claude／Codex session 的總覽與帳號用量（含 Fable 額度）、可快速切換的 session 清單（VS Code 或 Windows Terminal）、子代理與工作流程、編輯熱點、回合時間軸、git worktree、專案檔案樹；一個指令開啟全部面板；另附一支狀態列程式 |
+| [`haley-cockpit/`](haley-cockpit/) | Claude Code mod「駕駛艙」：本機所有 Claude／Codex session 的總覽與帳號用量（含 Fable 額度）、可快速切換的 session 清單（VS Code 或 Windows Terminal）、子代理與工作流程、編輯熱點、讀取紀錄、回合時間軸、git worktree、專案檔案樹；一個指令開啟全部面板；另附一支狀態列程式 |
 | [`vscode-session-switch/`](vscode-session-switch/) | 配套的 VS Code 擴充：狀態列右側顯示用量；右側欄「Claude 駕駛艙」每個 session 一條進度條，名稱和終端機分頁相同，點一下切到該終端機（VS Code 或 Windows Terminal） |
 
 > ⚠️ **使用前請先讀完下方〈免責聲明〉。** 這是個人工具，不是官方產品。
@@ -12,7 +12,7 @@
 ## 免責聲明
 
 1. **非官方**：本專案是個人自製的工具，與 Anthropic、OpenAI、Microsoft 沒有任何關係，也未經它們審核、認可或背書。Claude、Claude Code、Codex、ChatGPT、Visual Studio Code 等名稱與商標屬於各自的所有者。
-2. **API 可能變動**：Claude Code 的 mod（函式掛鉤外掛）API 目前是搶先體驗（early access），官方註明各版本之間可能變動而不另行通知。本專案只在這個環境測試過：Windows 11、Claude Code 2.1.301／2.1.302、Codex CLI 0.163、VS Code 1.138、Python 3.13。其他版本或平台可能部分或完全無法運作。
+2. **API 可能變動**：Claude Code 的 mod（函式掛鉤外掛）API 目前是搶先體驗（early access），官方註明各版本之間可能變動而不另行通知。本專案只在這個環境測試過：Windows 11、Claude Code 2.1.301／2.1.302／2.1.317、Codex CLI 0.163、VS Code 1.138、Python 3.13。其他版本或平台可能部分或完全無法運作。
 3. **依現狀提供，不負擔保責任**：本專案依「現狀」提供，不附任何明示或默示的保證，包括但不限於適售性、特定用途適用性與不侵權。因使用或無法使用本專案而產生的任何直接或間接損失，例如資料遺失、帳號用量或費用消耗、工作中斷、設定檔損壞，作者概不負責；使用風險由使用者自行承擔。[MIT 授權條款](LICENSE)中的免責條款同樣適用，以英文原文為準。
 4. **會讀取你的 session 紀錄**：為了顯示進度，本工具會在你的電腦上讀取 Claude Code 與 Codex 的 session 紀錄檔（`~/.claude/projects/`、`~/.codex/sessions/` 等），這些檔案可能含有你的程式碼、提示與 AI 回覆。所有解析都在本機進行：本工具自己不連網、不上傳，也不修改那些紀錄檔（唯一的間接例外：為了顯示 Fable 這類模型專屬額度，背景每 5 分鐘會執行一次官方的 `claude -p /usage` 指令，連網的是官方程式，本工具只解析它印出的文字，不碰你的登入憑證）。面板會在畫面上顯示 session 標題與待辦項目的文字，檔案樹會顯示你的資料夾與檔名，在共用螢幕、錄影或受管理的電腦上使用前，請自行評估風險。完整清單見〈會讀寫哪些檔案〉。
 5. **會操作你的視窗**：點選切換到 Windows Terminal 裡的 session 時，本工具會用 Windows 的 UI Automation 讀取 Windows Terminal 視窗的分頁名稱、選取對應的分頁並把視窗帶到前景。只在你主動點選或輸入 `/go` 時才會執行；找不到唯一對應的分頁時不會亂選。
@@ -25,11 +25,12 @@
 
 | 指令 | 面板內容 |
 |---|---|
-| `/cockpit` | 一次開啟全部六個面板（上方有分頁可切換）；`/cockpit close` 全部關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
+| `/cockpit` | 一次開啟全部七個面板（上方有分頁可切換）；`/cockpit close` 全部關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
 | `/go` | 列出編號的 session；`/go 3` 或 `/go 名稱` 切到那個 session 的終端機。 |
 | `/session-board` | 帳號用量（Claude 5 小時／7 天、Fable 等模型額度、Codex）與所有 session 的狀態、進度、context 比例；點一列切到該 session 的終端機（VS Code 或 Windows Terminal）。<br><br><img src="docs/acceptance/03-session-board.png" alt="/session-board：帳號用量與 session 清單" width="720"> |
 | `/agent-board` | 子代理與工作流程派出的代理：依階段分組，顯示進度、狀態與已執行時間。<br><br><img src="docs/acceptance/04-agent-board.png" alt="/agent-board：工作流程的代理清單" width="720"> |
 | `/edit-heatmap` | 本 session 各檔案被 Edit／Write 修改的次數排行。<br><br><img src="docs/acceptance/05-edit-heatmap.png" alt="/edit-heatmap：編輯熱點" width="720"> |
+| `/read-map` | 本 session（含子代理）讀了哪些檔案：開場自動載入的規範檔、Read 工具的次數與涵蓋行數（完整／部分）、Bash／PowerShell 從指令文字推測的讀檔、Grep／Glob 次數。 |
 | `/turn-timeline` | 本 session 每個回合的耗時、輸出 token、API 呼叫與工具次數。<br><br><img src="docs/acceptance/06-turn-timeline.png" alt="/turn-timeline：回合時間軸" width="720"> |
 | `/worktree-map` | 目前 repo 的 git worktree、分支與 HEAD，標出本 session 所在的那一個。<br><br><img src="docs/acceptance/07-worktree-map.png" alt="/worktree-map：git worktree 對照" width="720"> |
 | `/file-tree` | 專案檔案樹：點資料夾展開，點檔名或「複製」複製路徑（絕對或相對）。<br><br><img src="docs/acceptance/02-file-tree.png" alt="/file-tree：專案檔案樹" width="720"> |
@@ -52,6 +53,7 @@ ctx ███▍░░░░░░ 34% · $3.42 │ session 5：執行中 3 · �
 - **名稱與標題**：Claude 取自紀錄檔裡 Claude Code 自己產生的標題，`/rename` 取過名字的以自訂名稱為準；在 VS Code 終端機裡的 session，名稱用終端機分頁名稱（需要 VS Code 擴充）。Codex 取自 `~/.codex/session_index.jsonl` 的 thread 名稱。
 - **context 比例**：最後一次請求的輸入 token（含快取）除以視窗大小，與官方狀態列同一算法；剛 `/compact` 完、下一次請求之前留白。
 - **用量**：每個 session 只知道自己最近一次回應時的數字，本工具把各 session 的值合併（同一計量視窗取最大值）。Fable 這類模型專屬額度，由背景定期執行官方 `/usage` 取得（見免責聲明第 4 點）。
+- **讀取紀錄**：分段讀到檔尾也算完整（行數取聯集）；Grep／Glob 只有搜尋條件，只計次數；Bash／PowerShell 是從指令文字推測，腳本裡讀的檔看不到，也可能多列。讀過不等於讀懂，只表示內容進過 context。
 - **工作流程的代理**：官方的子代理清單不含工作流程派出的代理，所以直接讀 session 資料夾底下各代理的描述檔與對話紀錄；最後一列是結束回合的結果就算完成。
 - **Codex 的對應**：Codex 紀錄檔沒有程序編號，改用「codex.exe 啟動時間與 rollout 檔名時間相差 15 秒內」對應；用 `codex resume` 接續的舊 session 可能對應不到。
 - **編號**：依 session 啟動時間固定編號，與狀態無關；`/go`、狀態列、各面板是同一套。
@@ -61,7 +63,7 @@ ctx ███▍░░░░░░ 34% · $3.42 │ session 5：執行中 3 · �
 ### 需求
 
 - Windows 10／11（偵測程序用的是 Windows API；在其他系統目前讀不到任何 session）
-- Claude Code 2.1.287 以上（mod API；測試於 2.1.301、2.1.302）
+- Claude Code 2.1.287 以上（mod API；測試於 2.1.301、2.1.302、2.1.317）
 - Python 3.10 以上（只用標準函式庫，不需安裝套件）
 - Windows PowerShell 5.1（Windows 內建；切換 Windows Terminal 分頁時使用）
 - 選用：Codex CLI（顯示 Codex 的 session 與額度）、VS Code（點一列切換 VS Code 終端機）、Windows Terminal（點一列切換分頁）
@@ -124,7 +126,7 @@ code --install-extension <上一步印出的 .vsix 路徑>
 只讀：
 
 - `~/.claude/sessions/*.json`：Claude Code 的存活 session 登記表（狀態、名稱、工作目錄、程序編號）
-- `~/.claude/projects/*/<session>.jsonl`：Claude session 紀錄檔；只擷取回合時間、待辦項目、工具名稱與編輯的檔案路徑、token 數，不擷取提示與回覆內文
+- `~/.claude/projects/*/<session>.jsonl`：Claude session 紀錄檔；只擷取回合時間、待辦項目、工具名稱、編輯與讀取的檔案路徑、Bash／PowerShell 讀檔指令裡的路徑、讀取行數、token 數，不擷取提示、回覆與檔案內文
 - `~/.claude/settings.json`：只讀 `pluginConfigs` 裡本外掛的設定值
 - `~/.claude/projects/*/<session>/subagents/workflows/*/agent-*.meta.json`、`agent-*.jsonl`：工作流程代理的描述檔與對話紀錄；只擷取描述、階段、時間、工具名稱與次數、token 數，不擷取內文
 - `~/.codex/sessions/**/rollout-*.jsonl`、`~/.codex/session_index.jsonl`：Codex 的紀錄與標題
@@ -137,7 +139,7 @@ code --install-extension <上一步印出的 .vsix 路徑>
 - `usage.json`、`usage_history.jsonl`：用量快取與走勢樣本（保留 8 天）
 - `ctx/<session>.json`：各 Claude session 的狀態列回報的 context 比例與花費（每個 session 一個小檔，可隨時刪除）
 - `terminals/terminals-<程序編號>.json`：VS Code 擴充回報的終端機名稱（每個 VS Code 視窗一份，關閉視窗時刪除）
-- `cache/`：紀錄檔的增量解析結果（數字、待辦文字、檔案路徑、工作流程代理的進度）
+- `cache/`：紀錄檔的增量解析結果（數字、待辦文字、讀寫過的檔案路徑、工作流程代理的進度）
 - `switch-request.json`、`switch-ack.json`：和 VS Code 擴充交換的切換請求與回覆
 - `switch-context.json`、`switch-context-vscode-<程序編號>.json`：交給 Windows Terminal 切換程式的脈絡（目標與其他 session 的分頁名稱、程序編號、啟動時間）
 - `usage-refresh.lock`：背景查詢 Fable 額度時的鎖，避免同時啟動兩個

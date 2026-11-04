@@ -1,21 +1,28 @@
 # 路徑： collector\cockpit\claude_sessions.py
-# Claude Code session 收集：讀 ~\.claude\sessions\<pid>.json 存活登記表並核對程序還在；最後動作讀紀錄檔尾，回合、待辦進度與編輯熱點用增量解析並快取。
-# 回傳的是數值與 session 自己的標題、待辦項目文字，不回傳 prompt、回覆或工具輸出內容。
+# Claude Code session 收集：讀 ~\.claude\sessions\<pid>.json 存活登記表並核對程序還在；最後動作讀紀錄檔尾，回合、待辦進度、編輯熱點與讀取紀錄用增量解析並快取。
+# 回傳的是數值與 session 自己的標題、待辦項目文字、讀寫過的檔案路徑，不回傳 prompt、回覆、檔案內容或工具輸出內容。
 import glob
 import os
 import re
+import shlex
 
 from . import common, workflows
 
 SESSIONS_DIR = os.path.join(common.CLAUDE_DIR, "sessions")
 PROJECTS_DIR = os.path.join(common.CLAUDE_DIR, "projects")
-CACHE_VERSION = 3  # 2：多存最後一次請求的 token 數（算 context 比例）；3：多存 ai-title（標題）；版本變了舊快取會重新解析一次
+CACHE_VERSION = 4  # 2：多存最後一次請求的 token 數（算 context 比例）；3：多存 ai-title（標題）；4：多存讀取紀錄；版本變了舊快取會重新解析一次
 # 斜線指令與本機指令的輸出也以 user 列寫入，但不是使用者開的新回合
 LOCAL_PREFIX = ("<command-name>", "<local-command-stdout>", "<local-command-caveat>",
                 "<command-message>", "<local-command-stderr>")
 INTERRUPTED = "[Request interrupted"
 # 編輯熱點只算成功的寫檔類工具；值是輸入裡放檔案路徑的欄位
 EDIT_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+# 讀取紀錄：Read 的結果有起始行與總行數，分得出讀完沒；Grep、Glob 只有搜尋條件，只計次數
+READ_TOOLS = {"Read": "file_path"}
+SEARCH_TOOLS = ("Grep", "Glob")
+# Bash／PowerShell 只留指令文字，從常見的讀檔指令推測路徑；由腳本讀的檔案看不出來
+SHELL_TOOLS = ("Bash", "PowerShell")
+SHELL_READERS = {"cat", "head", "tail", "sed", "awk", "less", "more", "type", "get-content", "gc"}
 # 這幾類列很大又用不到（整份請求內容、檔案備份），先用字串比對跳過，不做 JSON 解析
 _HEAVY = (b'"type":"api-request-blob"', b'"type":"file-history-snapshot"', b'"type":"file-history-delta"',
           b'"type":"api-request-shape"')
@@ -153,10 +160,11 @@ def display_title(s, ai_title):
 
 # ---- 全檔增量解析（給 mod 的面板用） ----
 
-def _new_state(path):
-    return {"v": CACHE_VERSION, "path": path, "offset": 0, "turns": [], "req": None, "pending": {},
+def _new_state(path, sub=False):
+    return {"v": CACHE_VERSION, "path": path, "sub": sub, "offset": 0, "turns": [], "req": None, "pending": {},
             "edits": {}, "todos": None, "tasks": {}, "taskCreates": {}, "planStart": None, "planKind": None,
-            "lastTs": None, "lastErr": False, "ctxTokens": None, "aiTitle": None}
+            "lastTs": None, "lastErr": False, "ctxTokens": None, "aiTitle": None,
+            "instr": {}, "reads": {}, "shell": {}, "searches": {}}
 
 
 def _close_request(st):
@@ -184,8 +192,71 @@ def _set_todos(st, todos, ts):
     st["planKind"] = "todo"
 
 
+def merge_ranges(ranges, start, end):
+    """把新讀到的 [start, end] 併進已讀區間（行號從 1 起算、含頭含尾），相鄰或重疊的合成一段。"""
+    out = []
+    for a, b in sorted([*ranges, [start, end]]):
+        if out and a <= out[-1][1] + 1:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out
+
+
+def shell_read_paths(command):
+    """從指令文字推測讀了哪些檔：只看每段開頭是常見讀檔指令的，取看起來像路徑的參數。"""
+    out = []
+    for seg in re.split(r"\|\||&&|[|;\n]", command or ""):
+        try:
+            toks = shlex.split(seg, posix=False)
+        except ValueError:
+            toks = seg.split()
+        if not toks or toks[0].lower() not in SHELL_READERS:
+            continue
+        script_left = toks[0].lower() in ("sed", "awk")  # sed、awk 第一個非旗標參數是腳本，不是檔案
+        for raw in toks[1:]:
+            t = raw.strip("\"'")
+            if t.startswith((">", "2>", "<")):
+                break
+            if not t or t.startswith(("-", "$")):
+                continue
+            if script_left:
+                script_left = False
+                continue
+            if re.search(r"[\\/.]", t) and not re.fullmatch(r"[\d,.]+", t):
+                out.append(t)
+    return out
+
+
+def _note_attachment(st, a, ts):
+    """開場自動載入的規範檔（instructions）與使用者用 @ 提到的檔案（file）；內文不存，只記路徑。"""
+    if not isinstance(a, dict):
+        return
+    if a.get("type") == "instructions":
+        for x in a.get("files") or []:
+            if isinstance(x, dict) and x.get("path"):
+                st["instr"].setdefault(str(x["path"]), {"t": str(x.get("type") or ""), "at": ts})
+    elif a.get("type") == "file" and a.get("filename"):
+        st["instr"].setdefault(str(a["filename"]), {"t": "Mention", "at": ts})
+
+
+def _note_read(st, fpath, result, ts):
+    hit = st["reads"].setdefault(fpath, {"n": 0, "at": None, "total": None, "ranges": [], "whole": False})
+    hit["n"] += 1
+    hit["at"] = ts
+    res = result if isinstance(result, dict) else {}
+    f = res.get("file")
+    if res.get("type") == "text" and isinstance(f, dict) and f.get("totalLines") is not None:
+        hit["total"] = int(f["totalLines"])
+        start, num = int(f.get("startLine") or 1), int(f.get("numLines") or 0)
+        if num > 0:
+            hit["ranges"] = merge_ranges(hit["ranges"], start, start + num - 1)
+    elif res.get("type") in ("image", "pdf", "notebook"):
+        hit["whole"] = True  # 這幾種沒有行數，能讀到就是整份
+
+
 def _feed(st, o):
-    if o.get("isSidechain"):
+    if o.get("isSidechain") and not st.get("sub"):
         return
     kind = o.get("type")
     ts = common.iso_to_epoch(o.get("timestamp"))
@@ -197,6 +268,9 @@ def _feed(st, o):
         st["ctxTokens"] = None
     if kind == "ai-title":
         st["aiTitle"] = o.get("aiTitle") or st.get("aiTitle")
+        return
+    if kind == "attachment":
+        _note_attachment(st, o.get("attachment"), ts)
         return
     if kind == "user":
         if is_turn_start(o):
@@ -225,6 +299,8 @@ def _feed(st, o):
                 if name in EDIT_TOOLS and fpath:
                     count, _ = st["edits"].get(fpath, (0, None))
                     st["edits"][fpath] = [count + 1, ts]
+                if name in READ_TOOLS and fpath:
+                    _note_read(st, fpath, o.get("toolUseResult"), ts)
                 if name == "TaskCreate":
                     spec = st["taskCreates"].pop(tid, None)
                     task = ((o.get("toolUseResult") or {}).get("task") or {}) if isinstance(o.get("toolUseResult"), dict) else {}
@@ -262,8 +338,15 @@ def _feed(st, o):
             args = b.get("input") if isinstance(b.get("input"), dict) else {}
             if turn:
                 turn["tools"] += 1
-            fpath = args.get(EDIT_TOOLS[name]) if name in EDIT_TOOLS else None
+            field = EDIT_TOOLS.get(name) or READ_TOOLS.get(name)
+            fpath = args.get(field) if field else None
             st["pending"][b.get("id")] = [name, fpath if isinstance(fpath, str) else None]
+            if name in SEARCH_TOOLS:
+                st["searches"][name] = st["searches"].get(name, 0) + 1
+            elif name in SHELL_TOOLS:
+                for p in shell_read_paths(args.get("command")):
+                    n, _ = st["shell"].get(p, (0, None))
+                    st["shell"][p] = [n + 1, ts]
             if name == "TodoWrite":
                 _set_todos(st, args.get("todos"), ts)
             elif name == "TaskCreate":
@@ -290,18 +373,19 @@ def _feed(st, o):
                 turn["end"] = ts
 
 
-def analyze(path, sid):
-    """增量解析：快取記住讀到的位元組位置，每次只讀新增的完整行。檔案變短（被重寫）就從頭來。"""
+def analyze(path, sid, sub=False):
+    """增量解析：快取記住讀到的位元組位置，每次只讀新增的完整行。檔案變短（被重寫）就從頭來。
+    sub＝子代理自己的紀錄檔：每一列都標 isSidechain，要解析就不能略過。"""
     cache_path = os.path.join(common.CACHE_DIR, f"claude-{sid}.json")
     st = common.read_json(cache_path)
     if not isinstance(st, dict) or st.get("v") != CACHE_VERSION or st.get("path") != path:
-        st = _new_state(path)
+        st = _new_state(path, sub)
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
             size = f.tell()
             if size < st["offset"]:
-                st = _new_state(path)
+                st = _new_state(path, sub)
             f.seek(st["offset"])
             data = f.read(max(0, size - st["offset"]))
     except OSError:
@@ -364,6 +448,51 @@ def edit_rows(st):
     rows = [{"path": p, "count": v[0], "lastAt": v[1]} for p, v in (st.get("edits") or {}).items()]
     rows.sort(key=lambda r: (-r["count"], -(r["lastAt"] or 0)))
     return rows
+
+
+def subagent_transcripts(path):
+    """這個 session 的子代理與工作流程代理各自的紀錄檔。"""
+    return sorted(glob.glob(os.path.join(workflows.session_dir(path), "subagents", "**", "*.jsonl"), recursive=True))
+
+
+def read_view(main, subs):
+    """合併主對話與子代理的讀取紀錄。行數涵蓋取聯集：分段讀到檔尾也算讀完。"""
+    files = {}
+    for st, is_sub in [(main, False)] + [(s, True) for s in subs]:
+        for p, v in (st.get("reads") or {}).items():
+            r = files.setdefault(os.path.normcase(p.replace("/", "\\")), {
+                "path": p, "count": 0, "lastAt": None, "total": None, "ranges": [], "whole": False, "main": False})
+            r["count"] += v["n"]
+            r["whole"] = r["whole"] or v["whole"]
+            r["main"] = r["main"] or not is_sub
+            if v["at"] and (r["lastAt"] is None or v["at"] > r["lastAt"]):
+                r["lastAt"] = v["at"]
+                r["total"] = v["total"] if v["total"] is not None else r["total"]
+            elif r["total"] is None:
+                r["total"] = v["total"]
+            for a, b in v["ranges"]:
+                r["ranges"] = merge_ranges(r["ranges"], a, b)
+    rows = []
+    for r in files.values():
+        ranges, whole = r.pop("ranges"), r.pop("whole")
+        lines = sum(b - a + 1 for a, b in ranges)
+        r["lines"] = lines
+        r["complete"] = True if whole else (None if r["total"] is None else lines >= r["total"])
+        rows.append(r)
+    rows.sort(key=lambda r: -(r["lastAt"] or 0))
+    shell = {}
+    searches = {}
+    for st in [main, *subs]:
+        for p, (n, ts) in (st.get("shell") or {}).items():
+            r = shell.setdefault(p, {"path": p, "count": 0, "lastAt": None})
+            r["count"] += n
+            if ts and (r["lastAt"] is None or ts > r["lastAt"]):
+                r["lastAt"] = ts
+        for k, n in (st.get("searches") or {}).items():
+            searches[k] = searches.get(k, 0) + n
+    loaded = [{"path": p, "type": v["t"], "at": v["at"]} for p, v in (main.get("instr") or {}).items()]
+    return {"loaded": loaded, "files": rows, "total": sum(r["count"] for r in rows),
+            "shell": sorted(shell.values(), key=lambda r: -(r["lastAt"] or 0)), "searches": searches, "agents": len(subs)}
 
 
 def collect(procs, now_ts, stall_s, detail=False):

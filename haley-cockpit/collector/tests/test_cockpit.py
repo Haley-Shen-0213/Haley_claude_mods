@@ -1,6 +1,6 @@
 # 路徑： collector\tests\test_cockpit.py
 # 收集程式核心計算的單元測試（標準函式庫 unittest，不需安裝套件）：context 比例、壓縮後歸零、非終端機 session 過濾、終端機名稱對應、用量合併、ISO 時間、
-# 標題與編號、Fable 用量解析、狀態列排版、工作流程代理的狀態與增量解析。
+# 標題與編號、Fable 用量解析、狀態列排版、工作流程代理的狀態與增量解析、讀取紀錄。
 # 用法：python -X utf8 -B -m unittest discover -s collector/tests -v（在 haley-cockpit 資料夾下執行）
 import json
 import os
@@ -72,6 +72,89 @@ class ContextTokens(unittest.TestCase):
         claude_sessions._feed(st, assistant("r1", cache_read=1000))
         claude_sessions._feed(st, {**assistant("r2", cache_read=999999), "isSidechain": True})
         self.assertEqual(st["ctxTokens"], 1000)
+
+
+def tool_call(tid, name, **args):
+    return {"type": "assistant", "timestamp": "2026-10-17T00:00:00Z", "requestId": tid,
+            "message": {"content": [{"type": "tool_use", "id": tid, "name": name, "input": args}]}}
+
+
+def read_result(tid, start, num, total, ts="2026-10-17T00:00:01Z", error=False):
+    return {"type": "user", "timestamp": ts, "toolUseResult": {"type": "text", "file": {
+        "filePath": "x", "content": "機密內文", "startLine": start, "numLines": num, "totalLines": total}},
+            "message": {"content": [{"type": "tool_result", "tool_use_id": tid, "is_error": error}]}}
+
+
+class Reads(unittest.TestCase):
+    def test_split_reads_merge_to_complete(self):
+        """分兩段讀到檔尾算讀完；只讀一段算部分。"""
+        st = claude_sessions._new_state("x")
+        claude_sessions._feed(st, tool_call("t1", "Read", file_path="D:\\a.md"))
+        claude_sessions._feed(st, read_result("t1", 1, 100, 250))
+        row = claude_sessions.read_view(st, [])["files"][0]
+        self.assertEqual((row["lines"], row["total"], row["complete"]), (100, 250, False))
+        claude_sessions._feed(st, tool_call("t2", "Read", file_path="D:\\a.md", offset=101))
+        claude_sessions._feed(st, read_result("t2", 101, 150, 250))
+        row = claude_sessions.read_view(st, [])["files"][0]
+        self.assertEqual((row["count"], row["lines"], row["complete"]), (2, 250, True))
+
+    def test_failed_read_and_content_not_kept(self):
+        """失敗的讀取不算；快取與輸出都不留檔案內文。"""
+        st = claude_sessions._new_state("x")
+        claude_sessions._feed(st, tool_call("t1", "Read", file_path="D:\\gone.md"))
+        claude_sessions._feed(st, read_result("t1", 1, 0, 0, error=True))
+        self.assertEqual(claude_sessions.read_view(st, [])["files"], [])
+        claude_sessions._feed(st, tool_call("t2", "Read", file_path="D:\\b.md"))
+        claude_sessions._feed(st, read_result("t2", 1, 5, 5))
+        self.assertNotIn("機密內文", json.dumps(st, ensure_ascii=False))
+
+    def test_image_has_no_lines(self):
+        st = claude_sessions._new_state("x")
+        claude_sessions._feed(st, tool_call("t1", "Read", file_path="D:\\a.png"))
+        claude_sessions._feed(st, {"type": "user", "toolUseResult": {"type": "image"},
+                                   "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}})
+        self.assertTrue(claude_sessions.read_view(st, [])["files"][0]["complete"])
+
+    def test_instructions_attachment_keeps_path_only(self):
+        st = claude_sessions._new_state("x")
+        claude_sessions._feed(st, {"type": "attachment", "timestamp": "2026-10-17T00:00:00Z", "attachment": {
+            "type": "instructions", "files": [{"path": "D:\\CLAUDE.md", "type": "Project", "content": "規範內文"}]}})
+        claude_sessions._feed(st, {"type": "attachment", "attachment": {"type": "file", "filename": "D:\\b.md", "content": {}}})
+        self.assertEqual([(r["path"], r["type"]) for r in claude_sessions.read_view(st, [])["loaded"]],
+                         [("D:\\CLAUDE.md", "Project"), ("D:\\b.md", "Mention")])
+        self.assertNotIn("規範內文", json.dumps(st, ensure_ascii=False))
+
+    def test_subagent_reads_are_merged(self):
+        """子代理的紀錄檔每列都是 sidechain；以 sub 狀態解析才讀得到，與主對話合併時行數取聯集。"""
+        main = claude_sessions._new_state("m")
+        claude_sessions._feed(main, tool_call("t1", "Read", file_path="D:/a.md"))
+        claude_sessions._feed(main, read_result("t1", 1, 50, 100))
+        sub = claude_sessions._new_state("s", sub=True)
+        claude_sessions._feed(sub, {**tool_call("t2", "Read", file_path="D:\\a.md"), "isSidechain": True})
+        claude_sessions._feed(sub, {**read_result("t2", 51, 50, 100), "isSidechain": True})
+        claude_sessions._feed(sub, {**tool_call("t3", "Read", file_path="D:\\c.md"), "isSidechain": True})
+        claude_sessions._feed(sub, {**read_result("t3", 1, 1, 1), "isSidechain": True})
+        view = claude_sessions.read_view(main, [sub])
+        rows = {r["path"]: r for r in view["files"]}
+        self.assertTrue(rows["D:/a.md"]["complete"])
+        self.assertTrue(rows["D:/a.md"]["main"])
+        self.assertFalse(rows["D:\\c.md"]["main"])
+        self.assertEqual(view["agents"], 1)
+
+    def test_shell_paths_are_guessed_from_command(self):
+        f = claude_sessions.shell_read_paths
+        self.assertEqual(f("cat README.md | head -5"), ["README.md"])
+        self.assertEqual(f("sed -n '1,30p' src/a.py > out.txt"), ["src/a.py"])
+        self.assertEqual(f("Get-Content -LiteralPath 'D:\\a b\\c.md' -Encoding utf8; ls"), ["D:\\a b\\c.md"])
+        self.assertEqual(f("python x.py --cat a.md"), [])
+        self.assertEqual(f("git log -5"), [])
+
+    def test_searches_only_counted(self):
+        st = claude_sessions._new_state("x")
+        claude_sessions._feed(st, tool_call("t1", "Grep", pattern="秘密字串"))
+        claude_sessions._feed(st, tool_call("t2", "Glob", pattern="*.md"))
+        self.assertEqual(claude_sessions.read_view(st, [])["searches"], {"Grep": 1, "Glob": 1})
+        self.assertNotIn("秘密字串", json.dumps(st, ensure_ascii=False))
 
 
 class ContextPercent(unittest.TestCase):
