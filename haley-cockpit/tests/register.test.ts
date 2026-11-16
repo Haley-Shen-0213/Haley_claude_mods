@@ -139,6 +139,80 @@ function cmd(command: string, args = '') {
   return { command, args, origin: { kind: 'composer' as const }, presentation: { isFullscreen: true, columns: 160 } }
 }
 
+/** 自動更新（v1.2.0）的假環境：收集器的 startup／update-asked／update-apply 回答，記下呼叫參數、/config 寫入與提示。
+ * 從 mod 實際的入口 session.start 觸發；檢查在背景跑（不擋開場），所以用 settle() 等它跑完。 */
+function updateWorld(on: On, startup: Record<string, unknown>) {
+  const seen = { argv: [] as string[][], configSets: [] as unknown[], toasts: [] as string[] }
+  mock.clock(on, { now: NOW_S * 1000 })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('ui.panes', () => ({ value: [] }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.toast', ($, e) => {
+    seen.toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('config.set', ($, e) => {
+    seen.configSets.push({ key: e.key, value: e.value })
+    return { value: { value: e.value } }
+  })
+  on('process.run', ($, e) => {
+    seen.argv.push([...e.argv])
+    if (e.argv.includes('startup')) return ran(0, JSON.stringify(startup))
+    if (e.argv.includes('update-asked')) return ran(0, JSON.stringify({ asked: true }))
+    if (e.argv.includes('update-apply')) return ran(0, JSON.stringify({ ok: true, message: 'updated' }))
+    return ran(1, '', 'unexpected call')
+  })
+  return seen
+}
+
+const START = { cwd: 'D:\\work\\alpha', surface: null, isInteractive: true }
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 200; i++) await Promise.resolve()
+}
+
+const STARTUP = { kind: 'marketplace', marketplace: 'haley-claude-mods', installed: '1.2.0', latest: '1.3.0', available: true, asked: true, launcherWritten: false, error: null }
+
+test('自動更新：從資料夾載入只改寫狀態列啟動程式，不更新、不詢問', { options: { updateMode: '全自動' } }, async ($, on) => {
+  const seen = updateWorld(on, { ...STARTUP, kind: 'local', marketplace: null, asked: false, available: false })
+  await $.session.start(START)
+  await settle()
+  expect(seen.argv.length).toBe(1)
+  expect(seen.argv[0]).toContain('startup')
+  expect(seen.argv.some(a => a.includes('update-apply') || a.includes('update-asked'))).toBe(false)
+})
+
+test('自動更新：全自動有新版就直接更新並提示', { options: { updateMode: '全自動' } }, async ($, on) => {
+  const seen = updateWorld(on, STARTUP)
+  await $.session.start(START)
+  await settle()
+  expect(seen.argv.find(a => a.includes('startup')) ?? []).toContain('--check')
+  expect(seen.argv.some(a => a.includes('update-apply') && a.includes('haley-claude-mods'))).toBe(true)
+  expect(seen.toasts.join('\n')).toContain('1.3.0')
+})
+
+test('自動更新：不問不做（預設）不查新版、不更新', async ($, on) => {
+  const seen = updateWorld(on, STARTUP)
+  await $.session.start(START)
+  await settle()
+  expect(seen.argv.length).toBe(1)
+  expect(seen.argv[0]).not.toContain('--check')
+  expect(seen.argv.some(a => a.includes('update-apply'))).toBe(false)
+})
+
+test('自動更新：市集安裝第一次載入會詢問；關掉視窗就維持不問不做', async ($, on) => {
+  const seen = updateWorld(on, { ...STARTUP, asked: false })
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('dismissed')
+  })
+  await $.session.start(START)
+  await settle()
+  expect(seen.argv.some(a => a.includes('update-asked'))).toBe(true)
+  expect(seen.configSets).toEqual([])
+  expect(seen.argv.some(a => a.includes('update-apply'))).toBe(false)
+})
+
 function paneProps(title: string) {
   return { title, isFocused: true, bodyColumns: 140, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} }
 }

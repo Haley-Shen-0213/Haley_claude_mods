@@ -167,7 +167,7 @@ def main():
         with open(args[args.index("--dump-input") + 1], "w", encoding="utf-8") as f:
             f.write(raw)
     # 不論畫面顯示哪幾行都要回報：其他 session、mod 面板與 VS Code 擴充都靠這兩份資料
-    usage.record_claude(data.get("rate_limits"))
+    usage.record_claude(data.get("rate_limits"), f"sl:{data.get('session_id') or ''}")
     usage.record_session_ctx(data)
     result = board.collect(detail=False, refresh_usage=True)
     cols = int(os.environ.get("COLUMNS") or 120)

@@ -7,6 +7,7 @@ import time
 from . import claude_sessions, codex_sessions, common, usage, usage_fetch
 from .winproc import Processes
 
+CODEX_SCAN_EVERY = 60  # 秒：翻 rollout 找 Codex 額度的最短間隔（讀 6 個檔尾，各最多 256 KB）
 TERMINALS_FRESH = 120  # 秒：VS Code 擴充每 30 秒重寫一次，超過這個時間的檔案視為視窗已關閉
 
 
@@ -98,8 +99,9 @@ def collect(detail=False, stall_override=None, with_sparks=False, refresh_usage=
     rows.extend(codex_rows)
     if rates:
         usage.record_codex(max(rates, key=lambda r: r[0]))
-    elif not (common.read_json(usage.USAGE_PATH, {}) or {}).get("codex"):
-        # 沒有存活的 Codex，快取也還沒有額度時才去翻最新的 rollout（比較慢，只做一次）
+    # VS Code、子代理、codex exec 的 Codex 不在終端機程序裡，rates 看不到；不論有沒有終端機的 Codex，
+    # 最多每 CODEX_SCAN_EVERY 秒翻一次最近修改的 rollout，record_codex 只收事件時間較新的
+    if usage.codex_scan_due(now_ts, CODEX_SCAN_EVERY):
         usage.record_codex(codex_sessions.newest_rate())
     attach_terminals(rows, terminal_names(now_ts))
     attach_claude_ctx(rows)

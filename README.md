@@ -14,7 +14,7 @@
 1. **非官方**：本專案是個人自製的工具，與 Anthropic、OpenAI、Microsoft 沒有任何關係，也未經它們審核、認可或背書。Claude、Claude Code、Codex、ChatGPT、Visual Studio Code 等名稱與商標屬於各自的所有者。
 2. **API 可能變動**：Claude Code 的 mod（函式掛鉤外掛）API 目前是搶先體驗（early access），官方註明各版本之間可能變動而不另行通知。本專案只在這個環境測試過：Windows 11、Claude Code 2.1.301／2.1.302／2.1.317、Codex CLI 0.163、VS Code 1.138、Python 3.13。其他版本或平台可能部分或完全無法運作。
 3. **依現狀提供，不負擔保責任**：本專案依「現狀」提供，不附任何明示或默示的保證，包括但不限於適售性、特定用途適用性與不侵權。因使用或無法使用本專案而產生的任何直接或間接損失，例如資料遺失、帳號用量或費用消耗、工作中斷、設定檔損壞，作者概不負責；使用風險由使用者自行承擔。[MIT 授權條款](LICENSE)中的免責條款同樣適用，以英文原文為準。
-4. **會讀取你的 session 紀錄**：為了顯示進度，本工具會在你的電腦上讀取 Claude Code 與 Codex 的 session 紀錄檔（`~/.claude/projects/`、`~/.codex/sessions/` 等），這些檔案可能含有你的程式碼、提示與 AI 回覆。所有解析都在本機進行：本工具自己不連網、不上傳，也不修改那些紀錄檔（唯一的間接例外：為了顯示 Fable 這類模型專屬額度，背景每 5 分鐘會執行一次官方的 `claude -p /usage` 指令，連網的是官方程式，本工具只解析它印出的文字，不碰你的登入憑證）。面板會在畫面上顯示 session 標題與待辦項目的文字，檔案樹會顯示你的資料夾與檔名，在共用螢幕、錄影或受管理的電腦上使用前，請自行評估風險。完整清單見〈會讀寫哪些檔案〉。
+4. **會讀取你的 session 紀錄**：為了顯示進度，本工具會在你的電腦上讀取 Claude Code 與 Codex 的 session 紀錄檔（`~/.claude/projects/`、`~/.codex/sessions/` 等），這些檔案可能含有你的程式碼、提示與 AI 回覆。所有解析都在本機進行：本工具自己不連網、不上傳，也不修改那些紀錄檔（間接例外有兩個：為了顯示 Fable 這類模型專屬額度，背景每 5 分鐘會執行一次官方的 `claude -p /usage` 指令；開啟自動更新時，開啟 mod 會執行官方的 `claude plugin marketplace update` 與 `claude plugin update`。連網的都是官方程式，本工具只解析它們印出的文字，不碰你的登入憑證）。面板會在畫面上顯示 session 標題與待辦項目的文字，檔案樹會顯示你的資料夾與檔名，在共用螢幕、錄影或受管理的電腦上使用前，請自行評估風險。完整清單見〈會讀寫哪些檔案〉。
 5. **會操作你的視窗**：點選切換到 Windows Terminal 裡的 session 時，本工具會用 Windows 的 UI Automation 讀取 Windows Terminal 視窗的分頁名稱、選取對應的分頁並把視窗帶到前景。只在你主動點選或輸入 `/go` 時才會執行；找不到唯一對應的分頁時不會亂選。
 6. **數字是推算的**：用量百分比、重置倒數、預估剩餘時間與停滯判斷，都是依本機紀錄，以及各 session 最近一次收到的回應推算，可能落後，也可能與官方顯示不同。請以官方介面（例如 Claude Code 的 `/usage`）為準，不要依這些數字做計費或排程決策。
 7. **不保證維護**：本專案可能隨時停止更新，也可能不經通知修改或移除功能。
@@ -52,7 +52,7 @@ ctx ███▍░░░░░░ 34% · $3.42 │ session 5：執行中 3 · �
 - **預估剩餘時間**：有待辦清單時，依「已耗時 ÷ 已完成 × 未完成」估算；沒有清單顯示「無計畫」。沒有清單但有工作流程在跑時，進度改看代理的完成數。
 - **名稱與標題**：Claude 取自紀錄檔裡 Claude Code 自己產生的標題，`/rename` 取過名字的以自訂名稱為準；在 VS Code 終端機裡的 session，名稱用終端機分頁名稱（需要 VS Code 擴充）。Codex 取自 `~/.codex/session_index.jsonl` 的 thread 名稱。
 - **context 比例**：最後一次請求的輸入 token（含快取）除以視窗大小，與官方狀態列同一算法；剛 `/compact` 完、下一次請求之前留白。
-- **用量**：每個 session 只知道自己最近一次回應時的數字，本工具把各 session 的值合併（同一計量視窗取最大值）。Fable 這類模型專屬額度，由背景定期執行官方 `/usage` 取得（見免責聲明第 4 點）。
+- **用量**：每個 session 只知道自己最近一次回應時的數字，閒置 session 的狀態列仍會一直重畫舊數字。本工具記住每個 session 上次回報的值，值有變才代表剛收到新回應並採用，比原本低也照用（例如用了清除券之後）；值沒變的不採用。Codex 的額度從最近修改的紀錄檔讀，VS Code、子代理裡的 Codex 也算。Fable 這類模型專屬額度，由背景定期執行官方 `/usage` 取得（見免責聲明第 4 點）。
 - **讀取紀錄**：分段讀到檔尾也算完整（行數取聯集）；Grep／Glob 只有搜尋條件，只計次數；Bash／PowerShell 是從指令文字推測，腳本裡讀的檔看不到，也可能多列。讀過不等於讀懂，只表示內容進過 context。
 - **工作流程的代理**：官方的子代理清單不含工作流程派出的代理，所以直接讀 session 資料夾底下各代理的描述檔與對話紀錄；最後一列是結束回合的結果就算完成。
 - **Codex 的對應**：Codex 紀錄檔沒有程序編號，改用「codex.exe 啟動時間與 rollout 檔名時間相差 15 秒內」對應；用 `codex resume` 接續的舊 session 可能對應不到。
@@ -94,22 +94,29 @@ claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_m
 
 - `stallMinutes`：停滯門檻（分鐘），預設 10；狀態列也讀這個值。
 - `python`：執行收集程式用的 Python，預設 `python`；不在 PATH 上時填完整路徑。
+- `updateMode`（更新模式）：`不問不做`（預設）、`可選`、`全自動`。見下方〈自動更新〉。
 
-**狀態列（選用）**：在 `~/.claude/settings.json` 加入下面這段，路徑換成你的位置並使用正斜線（Windows 上 Claude Code 會經 Git Bash 執行這個指令）：
+**自動更新（v1.2.0 起，只對方法一）**：
+
+- 用方法一安裝後第一次開啟 mod，會問你要不要開啟自動更新；不選或關掉視窗就維持「不問不做」。之後在 `/config` 的「更新模式」修改。
+- 「可選」：開啟 mod 時發現新版會先問你；「全自動」：直接更新並提示。新版在執行 `/reload-plugins` 或重開 session 後生效。
+- 查新版與更新都是執行官方的 `claude plugin marketplace update`、`claude plugin update`，同一台電腦一小時內只查一次。
+- 用方法二（從資料夾載入）時不檢查更新，請自己更新資料夾內容。
+- Claude Code 本身也有市集的自動更新開關（`/plugin` → Marketplaces，第三方市集預設關，開了不會先問）；兩者擇一使用即可。
+
+**狀態列（選用）**：先開啟一次 Claude Code 讓 mod 載入（v1.2.0 起，mod 每次載入都會在 `~/.claude/haley-cockpit/statusline_launcher.py` 寫一支啟動程式，指向目前載入的版本），再在 `~/.claude/settings.json` 加入下面這段，`C:/Users/你的帳號` 換成你的使用者資料夾並使用正斜線（Windows 上 Claude Code 會經 Git Bash 執行這個指令）：
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "python -X utf8 -B C:/path/to/Haley_claude_mods/haley-cockpit/collector/statusline.py --list",
+    "command": "python -X utf8 -B C:/Users/你的帳號/.claude/haley-cockpit/statusline_launcher.py --list",
     "refreshInterval": 30
   }
 }
 ```
 
-`--list` 會多顯示一行 session 清單，不需要可以拿掉。
-
-用方法一安裝的副本放在 Claude Code 的外掛快取資料夾，路徑會隨版本改變；要用狀態列的話，建議另外下載 ZIP 或 clone 一份來指向。
+`--list` 會多顯示一行 session 清單，不需要可以拿掉。方法一、方法二都用這個寫法：方法一的外掛放在 Claude Code 的外掛快取資料夾，路徑會隨版本改變，啟動程式會自動跟上。
 
 **VS Code 擴充（選用）**：本專案不附打包好的 `.vsix`，也不會自動改你的 VS Code；要用的話自己打包並安裝（在解壓縮或 clone 後的資料夾裡執行）：
 
@@ -143,9 +150,11 @@ code --install-extension <上一步印出的 .vsix 路徑>
 - `switch-request.json`、`switch-ack.json`：和 VS Code 擴充交換的切換請求與回覆
 - `switch-context.json`、`switch-context-vscode-<程序編號>.json`：交給 Windows Terminal 切換程式的脈絡（目標與其他 session 的分頁名稱、程序編號、啟動時間）
 - `usage-refresh.lock`：背景查詢 Fable 額度時的鎖，避免同時啟動兩個
+- `statusline_launcher.py`：狀態列的啟動程式，內容只有目前載入的外掛位置（mod 每次載入時更新）
+- `update.json`：自動更新的狀態（是否問過、上次查詢時間與查到的版本）
 - `statusline-error.log`：狀態列出錯時的錯誤訊息
 
-除此之外，本工具自己不連網（背景查詢 Fable 額度時執行的是官方 `claude` 程式，見免責聲明第 4 點），也不修改任何 session 紀錄檔、設定檔或專案檔案。
+除此之外，本工具自己不連網（背景查詢 Fable 額度、查新版與更新時執行的都是官方 `claude` 程式，見免責聲明第 4 點），也不修改任何 session 紀錄檔或專案檔案。唯一會改的設定：第一次詢問自動更新時選了「可選」或「全自動」，會透過 Claude Code 的設定介面把本外掛的「更新模式」改成你選的值。
 
 ### 移除
 

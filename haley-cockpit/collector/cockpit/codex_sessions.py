@@ -268,12 +268,21 @@ def collect(procs, now_ts, stall_s, detail=False):
 
 
 def newest_rate():
-    """沒有存活的 Codex session 時，從最新的幾個 rollout 檔尾找最後一次額度回報（Codex 只在收到回應時回報）。"""
+    """從最近修改的幾個 rollout 檔尾找最後一次額度回報（Codex 只在收到回應時回報）。
+    VS Code、桌面 App、子代理、codex exec 的 Codex 不是終端機程序，collect() 看不到，只能靠這裡。
+    依最後修改時間挑檔：跑很久的 session 檔名（開始時間）較舊，但可能剛寫入。"""
     days = sorted(glob.glob(os.path.join(SESSIONS_DIR, "*", "*", "*")))[-3:]
     files = []
     for d in days:
         files.extend(glob.glob(os.path.join(d, "rollout-*.jsonl")))
-    files.sort(key=lambda p: os.path.basename(p), reverse=True)
+
+    def mtime(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0
+
+    files.sort(key=mtime, reverse=True)
     best = None
     for path in files[:6]:
         t = tail_state(path)

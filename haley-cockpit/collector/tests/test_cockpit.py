@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from unittest import mock  # noqa: E402
 
 import statusline  # noqa: E402
-from cockpit import board, claude_sessions, codex_sessions, common, usage, usage_fetch, winproc, workflows  # noqa: E402
+from cockpit import board, claude_sessions, codex_sessions, common, updater, usage, usage_fetch, winproc, workflows  # noqa: E402
 
 
 def tearDownModule():
@@ -246,6 +246,70 @@ class UsageMerge(unittest.TestCase):
         self.assertEqual(self._used(), 12)
         usage.record_claude({"five_hour": {"used_percentage": 1, "resets_at": reset + 18000}})
         self.assertEqual(self._used(), 1)
+
+    def test_fresh_lower_reading_after_reset_coupon(self):
+        """CL 用清除券：用量變低、重置時間不變。來源剛收到新回應（值有變）就採用，閒置 session 重畫的舊值不拉回去（D1A）。"""
+        reset = time.time() + 86400
+        a, b = "sl:aaaaaaaa-1111", "sl:bbbbbbbb-2222"
+        usage.record_claude({"five_hour": {"used_percentage": 99, "resets_at": reset}}, a)
+        usage.record_claude({"five_hour": {"used_percentage": 99, "resets_at": reset}}, b)
+        self.assertEqual(self._used(), 99)
+        usage.record_claude({"five_hour": {"used_percentage": 84, "resets_at": reset}}, a)
+        self.assertEqual(self._used(), 84)
+        usage.record_claude({"five_hour": {"used_percentage": 99, "resets_at": reset}}, b)  # 閒置的 b 重畫
+        self.assertEqual(self._used(), 84)
+        usage.record_claude({"five_hour": {"used_percentage": 85, "resets_at": reset}}, b)  # b 收到新回應
+        self.assertEqual(self._used(), 85)
+
+    def test_official_usage_always_fresh(self):
+        """官方 /usage 是伺服器當下的數字：比紀錄低也採用，連續兩次相同也不擋。"""
+        reset = time.time() + 86400
+        usage.record_claude({"five_hour": {"used_percentage": 99, "resets_at": reset}}, "sl:aaaaaaaa-1111")
+        usage.record_claude({"five_hour": {"used_percentage": 84, "resets_at": reset}}, usage.OFFICIAL)
+        self.assertEqual(self._used(), 84)
+
+    def test_bad_source_falls_back_to_monotonic(self):
+        """來源格式不對（例如沒有 session_id）就當成沒有來源，維持只增不減。"""
+        reset = time.time() + 86400
+        usage.record_claude({"five_hour": {"used_percentage": 50, "resets_at": reset}}, "sl:")
+        usage.record_claude({"five_hour": {"used_percentage": 40, "resets_at": reset}}, "sl:")
+        self.assertEqual(self._used(), 50)
+
+    def test_older_window_never_taken(self):
+        """有來源也一樣：重置時間較舊的視窗（重置前的舊回應）不採用。"""
+        reset = time.time() + 86400
+        usage.record_claude({"five_hour": {"used_percentage": 5, "resets_at": reset}}, "sl:aaaaaaaa-1111")
+        usage.record_claude({"five_hour": {"used_percentage": 90, "resets_at": reset - 18000}}, "sl:bbbbbbbb-2222")
+        self.assertEqual(self._used(), 5)
+
+    def test_codex_scan_throttled(self):
+        """翻 rollout 找 Codex 額度最多每 60 秒一次。"""
+        now = time.time()
+        self.assertTrue(usage.codex_scan_due(now, 60))
+        self.assertFalse(usage.codex_scan_due(now + 30, 60))
+        self.assertTrue(usage.codex_scan_due(now + 61, 60))
+
+    def test_codex_newest_rate_by_mtime(self):
+        """檔名較舊、但剛寫入的 rollout（跑很久的 VS Code session）也要讀到；以事件時間較新的為準。"""
+        old_dir = codex_sessions.SESSIONS_DIR
+        root = tempfile.mkdtemp(dir=_DATA)
+        day = os.path.join(root, "2026", "11", "16")
+        os.makedirs(day)
+        try:
+            codex_sessions.SESSIONS_DIR = root
+            now = time.time()
+            for i in range(7):  # 7 個檔名較新但較舊寫入的檔，擠掉原本依檔名取前 6 個的範圍
+                p = os.path.join(day, f"rollout-2026-11-16T05-0{i}-00-{i:08d}-0000-0000-0000-000000000000.jsonl")
+                _jl(p, [{"type": "event_msg", "timestamp": _iso(now - 3600), "payload": {
+                    "type": "token_count", "rate_limits": {"primary": {"used_percent": 51.0}}}}], "w")
+                os.utime(p, (now - 3600, now - 3600))
+            p = os.path.join(day, "rollout-2026-11-14T21-56-14-99999999-0000-0000-0000-000000000000.jsonl")
+            _jl(p, [{"type": "event_msg", "timestamp": _iso(now - 60), "payload": {
+                "type": "token_count", "rate_limits": {"primary": {"used_percent": 85.0}}}}], "w")
+            ts, rate = codex_sessions.newest_rate()
+            self.assertEqual(rate["primary"]["used_percent"], 85.0)
+        finally:
+            codex_sessions.SESSIONS_DIR = old_dir
 
     def test_expired_window_is_unknown(self):
         """重置時間已過的視窗，用量未知（要等下一次 API 回應）。"""
@@ -581,6 +645,102 @@ class IsoTime(unittest.TestCase):
         self.assertAlmostEqual(common.iso_to_epoch("2026-10-16T14:15:21.4441385Z"), 1792160121.4441385, places=3)
         self.assertEqual(common.iso_to_epoch("2026-10-16T22:15:21+08:00"), common.iso_to_epoch("2026-10-16T14:15:21Z"))
         self.assertIsNone(common.iso_to_epoch("不是時間"))
+
+
+class Updater(unittest.TestCase):
+    """v1.2.0 自動更新：判斷安裝方式、比版本、查新版（官方指令以假造取代）、狀態列啟動程式。"""
+
+    def setUp(self):
+        for p in (updater.STATE_PATH, updater.LAUNCHER_PATH):
+            if os.path.exists(p):
+                os.remove(p)
+        self.cache = os.path.join(_DATA, "plugin-cache")
+        self.env = mock.patch.dict(os.environ, {"CLAUDE_CODE_PLUGIN_CACHE_DIR": self.cache})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+
+    def _plugin(self, root, version):
+        os.makedirs(os.path.join(root, ".claude-plugin"), exist_ok=True)
+        os.makedirs(os.path.join(root, "collector"), exist_ok=True)
+        with open(os.path.join(root, ".claude-plugin", "plugin.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "haley-cockpit", "version": version}, f)
+        with open(os.path.join(root, "collector", "statusline.py"), "w", encoding="utf-8") as f:
+            f.write("import sys\nprint('狀態列', sys.argv[1:])\n")
+
+    def _market(self, version):
+        mdir = os.path.join(_DATA, "market")
+        os.makedirs(os.path.join(mdir, ".claude-plugin"), exist_ok=True)
+        with open(os.path.join(mdir, ".claude-plugin", "marketplace.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "haley-claude-mods", "plugins": [{"name": "haley-cockpit", "source": "./haley-cockpit"}]}, f)
+        self._plugin(os.path.join(mdir, "haley-cockpit"), version)
+        return mdir
+
+    def test_install_kind(self):
+        """快取\\<市集>\\haley-cockpit\\<版本> 是市集安裝；其他位置（手動部署、開發資料夾）是 local。"""
+        root = os.path.join(self.cache, "haley-claude-mods", "haley-cockpit", "1.2.0")
+        self.assertEqual(updater.install_kind(root), ("marketplace", "haley-claude-mods"))
+        self.assertEqual(updater.install_kind(os.path.join(_DATA, "plugins-local", "haley-cockpit")), ("local", None))
+        self.assertEqual(updater.install_kind(os.path.join(self.cache, "m", "other-plugin", "1.0.0")), ("local", None))
+
+    def test_version_compare_is_numeric(self):
+        self.assertGreater(updater.version_key("1.10.0"), updater.version_key("1.9.2"))
+        self.assertEqual(updater.version_key("1.2.0"), (1, 2, 0))
+
+    def test_local_install_never_checks(self):
+        """從資料夾載入：就算要求檢查也不執行任何 claude 指令。"""
+        root = os.path.join(_DATA, "plugins-local", "haley-cockpit")
+        self._plugin(root, "1.2.0")
+        with mock.patch.object(updater, "_run") as run:
+            out = updater.startup(root, check=True)
+        run.assert_not_called()
+        self.assertEqual(out["kind"], "local")
+        self.assertFalse(out["available"])
+
+    def test_marketplace_newer_version_found_and_cached(self):
+        """市集有較新版本就回 available；一小時內第二次不再向市集查。"""
+        root = os.path.join(self.cache, "haley-claude-mods", "haley-cockpit", "1.2.0")
+        self._plugin(root, "1.2.0")
+        mdir = self._market("1.3.0")
+        listing = json.dumps([{"name": "haley-claude-mods", "installLocation": mdir}])
+        calls = []
+
+        def fake(args):
+            calls.append(args)
+            return (0, listing, "") if args[:3] == ["plugin", "marketplace", "list"] else (0, "", "")
+
+        with mock.patch.object(updater, "_run", side_effect=fake):
+            out = updater.startup(root, check=True, now_ts=1000.0)
+            again = updater.startup(root, check=True, now_ts=1000.0 + 60)
+        self.assertTrue(out["available"])
+        self.assertEqual(out["latest"], "1.3.0")
+        self.assertTrue(again["available"])
+        self.assertEqual(sum(1 for a in calls if a[:3] == ["plugin", "marketplace", "update"]), 1)
+
+    def test_same_version_not_available(self):
+        root = os.path.join(self.cache, "haley-claude-mods", "haley-cockpit", "1.3.0")
+        self._plugin(root, "1.3.0")
+        mdir = self._market("1.3.0")
+        listing = json.dumps([{"name": "haley-claude-mods", "installLocation": mdir}])
+        with mock.patch.object(updater, "_run", side_effect=lambda a: (0, listing if a[1] == "marketplace" and a[2] == "list" else "", "")):
+            self.assertFalse(updater.startup(root, check=True)["available"])
+
+    def test_launcher_runs_current_version(self):
+        """狀態列啟動程式執行目前載入版本的 statusline.py，參數照傳；位置沒變就不重寫。"""
+        root = os.path.join(self.cache, "haley-claude-mods", "haley-cockpit", "1.2.0")
+        self._plugin(root, "1.2.0")
+        self.assertTrue(updater.write_launcher(root))
+        self.assertFalse(updater.write_launcher(root))
+        import subprocess
+        p = subprocess.run([sys.executable, "-X", "utf8", "-B", updater.LAUNCHER_PATH, "--list"], capture_output=True)
+        self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace"))
+        self.assertIn("狀態列 ['--list']", p.stdout.decode("utf-8"))
+
+    def test_apply_rejects_bad_marketplace_name(self):
+        with mock.patch.object(updater, "_run") as run:
+            self.assertFalse(updater.apply("a b; rm")["ok"])
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

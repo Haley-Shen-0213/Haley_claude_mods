@@ -136,10 +136,11 @@ export function stallMinutes(options: PluginOptions): number {
   return typeof v === 'number' && v > 0 ? v : 10
 }
 
-export async function runCli<T>($: Dollar, options: PluginOptions, args: readonly string[]): Promise<CliResult<T>> {
+/** root：外掛根目錄，省略時用 $.plugin.root（測試的 $ 沒有 plugin，由呼叫端傳入）。 */
+export async function runCli<T>($: Dollar, options: PluginOptions, args: readonly string[], root?: string): Promise<CliResult<T>> {
   try {
     // -B：不寫 __pycache__；外掛資料夾可能在版控裡，也可能被引擎監看熱重載
-    const r = await $.process.run([pythonCommand(options), '-X', 'utf8', '-B', `${$.plugin.root}/collector/cockpit_cli.py`, ...args], {
+    const r = await $.process.run([pythonCommand(options), '-X', 'utf8', '-B', `${root ?? $.plugin.root}/collector/cockpit_cli.py`, ...args], {
       timeoutMs: CLI_TIMEOUT_MS,
     })
     if (r.exitCode !== 0) {

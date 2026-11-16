@@ -1,6 +1,6 @@
 {
   "name": "haley-cockpit",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量（含 Fable 額度）、依編號快速切換 session、子代理與工作流程、編輯熱點、讀取紀錄、回合時間軸、git worktree、專案檔案樹",
   "author": { "name": "Haley-Shen-0213", "url": "https://github.com/Haley-Shen-0213" },
   "license": "MIT",
@@ -18,6 +18,13 @@
       "title": "Python 指令",
       "description": "執行 collector\\cockpit_cli.py 用的 Python（3.10 以上）；不在 PATH 上時填完整路徑",
       "default": "python"
+    },
+    "updateMode": {
+      "type": "string",
+      "title": "更新模式",
+      "description": "從市集安裝時，開啟 mod 是否檢查新版：不問不做＝不檢查；可選＝有新版先問；全自動＝有新版直接更新（/reload-plugins 或重開後生效）。從資料夾載入時不檢查",
+      "options": ["不問不做", "可選", "全自動"],
+      "default": "不問不做"
     }
   }
 }

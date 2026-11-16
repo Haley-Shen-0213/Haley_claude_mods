@@ -14,13 +14,27 @@ HISTORY_KEEP = 8 * 86400    # 秒：保留 8 天（7 天視窗再多一天）
 HISTORY_MAX_BYTES = 2 * 1024 * 1024
 
 
-def record_claude(rate_limits):
-    """狀態列收到的 rate_limits 是「該 session 最近一次 API 回應」的值；閒置 session 的值會過時。
-    合併規則：重置時間較新代表已進入新視窗，直接取代；同一視窗內用量只增不減，取較大者。這樣任何一個 session 有新回應，大家都看得到最新值。"""
+OFFICIAL = "official"        # 官方 /usage：伺服器當下的數字，一律視為新回應
+SOURCE_RE = re.compile(r"(sl|mod):[0-9A-Za-z-]{8,64}")
+
+
+def record_claude(rate_limits, source=None):
+    """狀態列收到的 rate_limits 是「該 session 最近一次 API 回應」的值；閒置 session 的值會過時，但狀態列仍會一直重畫、一直回報。
+    合併規則（2026-11-16 Haley 裁定 D1A）：
+    - 重置時間較新代表已進入新視窗，直接取代。
+    - 有來源（sl:<session>＝狀態列、mod:<session>＝mod 面板、official＝官方 /usage）時，每個來源記住自己上次回報的值；
+      值有變（或第一次回報）代表該來源剛收到伺服器的新回應，同一視窗內直接採用，比紀錄低也照用。
+      Claude 用清除券後用量會變低、重置時間不變，靠這條才降得下來。
+      值沒變的是閒置 session 的重畫，不採用，避免把舊的高數字拉回去。
+    - 沒有來源（舊呼叫方式）時維持原規則：同一視窗內只增不減，取較大者。"""
     if not isinstance(rate_limits, dict):
         return
+    if source is not None and source != OFFICIAL and not SOURCE_RE.fullmatch(str(source)):
+        source = None
     store = common.read_json(USAGE_PATH, {}) or {}
     claude = store.get("claude") or {}
+    sources = store.get("claudeSources") or {}
+    now_ts = common.now()
     changed = False
     for kind in CLAUDE_WINDOWS:
         w = rate_limits.get(kind)
@@ -30,15 +44,34 @@ def record_claude(rate_limits):
             new = {"used": float(w["used_percentage"]), "resetsAt": float(w.get("resets_at") or 0)}
         except (TypeError, ValueError):
             continue
+        fresh = False
+        if source == OFFICIAL:
+            fresh = True
+        elif source:
+            last = (sources.get(source) or {}).get(kind)
+            fresh = last != new
+            if fresh:
+                sources.setdefault(source, {})[kind] = new
+                changed = True
         old = claude.get(kind)
         # 官方 /usage 的重置時間只精確到分鐘、狀態列給的是整點秒數，所以兩分鐘內都算同一個視窗
         newer_window = old is None or new["resetsAt"] > old.get("resetsAt", 0) + 120
         same_window = old is not None and abs(new["resetsAt"] - old.get("resetsAt", 0)) <= 120
-        if newer_window or (same_window and new["used"] > old.get("used", 0)):
-            claude[kind] = {**new, "seenAt": common.now()}
+        if source:
+            take = newer_window or (same_window and fresh and new["used"] != old.get("used"))
+        else:
+            take = newer_window or (same_window and new["used"] > old.get("used", 0))
+        if take:
+            claude[kind] = {**new, "seenAt": now_ts}
+            changed = True
+    # 來源記錄裡的視窗都已過重置時間就刪掉：那個 session 之後再回報舊視窗，也會被「較舊視窗不採用」擋下
+    for sid in list(sources):
+        if all((v or {}).get("resetsAt", 0) < now_ts for v in sources[sid].values()):
+            del sources[sid]
             changed = True
     if changed:
         store["claude"] = claude
+        store["claudeSources"] = sources
         common.write_json_atomic(USAGE_PATH, store)
 
 
@@ -71,7 +104,7 @@ def record_usage_text(parsed, now_ts):
         w = parsed.get(kind)
         if w and w.get("resetsAt"):
             windows[kind] = {"used_percentage": w["used"], "resets_at": w["resetsAt"]}
-    record_claude(windows)
+    record_claude(windows, OFFICIAL)
 
 
 def mark_usage_try(now_ts):
@@ -93,6 +126,16 @@ def record_codex(found):
     if ts and ts > (old.get("ts") or 0):
         store["codex"] = {"ts": ts, "rate": rate}
         common.write_json_atomic(USAGE_PATH, store)
+
+
+def codex_scan_due(now_ts, every):
+    """距離上次翻 rollout 超過 every 秒才回 True，並記下這次的時間（多個狀態列同時跑時，最多一個去翻）。"""
+    store = common.read_json(USAGE_PATH, {}) or {}
+    if now_ts - (store.get("codexScanAt") or 0) < every:
+        return False
+    store["codexScanAt"] = now_ts
+    common.write_json_atomic(USAGE_PATH, store)
+    return True
 
 
 def _codex_window(w, now_ts):

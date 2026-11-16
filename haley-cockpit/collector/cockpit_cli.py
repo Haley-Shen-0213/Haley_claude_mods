@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-from cockpit import board, claude_sessions, common, usage, usage_fetch, workflows
+from cockpit import board, claude_sessions, common, updater, usage, usage_fetch, workflows
 from cockpit.winproc import Processes
 
 
@@ -84,6 +84,7 @@ def main():
     b = sub.add_parser("board", help="所有 session 總覽與帳號用量")
     b.add_argument("--stall-minutes")
     b.add_argument("--claude-rate", help="mod 從 $.session.usage() 取得的 Claude 用量（狀態列 stdin 的 rate_limits 格式）")
+    b.add_argument("--claude-session", help="--claude-rate 來自哪個 session；用來判斷是不是剛收到的新回應")
     e = sub.add_parser("edits", help="編輯熱點")
     e.add_argument("--session", action="append")
     e.add_argument("--all", action="store_true", help="所有存活的 Claude session")
@@ -92,14 +93,27 @@ def main():
     t = sub.add_parser("turns", help="回合時間軸")
     t.add_argument("--session", action="append", required=True)
     sub.add_parser("usage-refresh", help="背景重抓各模型的額度（執行官方 /usage 並解析；一般由總覽自動觸發）")
+    su = sub.add_parser("startup", help="mod 載入時：改寫狀態列啟動程式；市集安裝且加 --check 時查新版")
+    su.add_argument("--root", required=True, help="目前載入的外掛根目錄（$.plugin.root）")
+    su.add_argument("--check", action="store_true")
+    sub.add_parser("update-asked", help="記下已詢問過使用者要不要開啟自動更新")
+    ua = sub.add_parser("update-apply", help="執行官方 claude plugin update")
+    ua.add_argument("--marketplace", required=True)
     args = ap.parse_args()
     if args.cmd == "usage-refresh":
         usage_fetch.run_refresh()
         return
-    if args.cmd == "board":
+    if args.cmd == "startup":
+        result = updater.startup(args.root, args.check)
+    elif args.cmd == "update-asked":
+        result = updater.mark_asked()
+    elif args.cmd == "update-apply":
+        result = updater.apply(args.marketplace)
+    elif args.cmd == "board":
         if args.claude_rate:
             try:
-                usage.record_claude(json.loads(args.claude_rate))
+                usage.record_claude(json.loads(args.claude_rate),
+                                    f"mod:{args.claude_session}" if args.claude_session else None)
             except ValueError:
                 pass
         result = board.collect(detail=True, stall_override=args.stall_minutes, with_sparks=True, refresh_usage=True)

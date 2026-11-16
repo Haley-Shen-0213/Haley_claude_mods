@@ -146,7 +146,20 @@ export type CockpitLoad<T> = { data: T | null; error: string | null; loadedAt: n
 export type CockpitAgentTime = { startedAt: number; endedAt: number | null }
 
 /** 檔案樹的一個項目 */
-export type CockpitTreeEntry = { name: string; kind: 'file' | 'dir' | 'other'; size: number }
+/** cockpit_cli.py startup：安裝方式、版本與是否有新版（v1.2.0 自動更新）。 */
+export type CockpitStartup = {
+  kind: 'marketplace' | 'local'
+  marketplace: string | null
+  installed: string | null
+  latest: string | null
+  available: boolean
+  asked: boolean
+  launcherWritten: boolean
+  error: string | null
+}
+export type CockpitUpdateApply = { ok: boolean; message: string }
+
+export type CockpitTreeEntry ={ name: string; kind: 'file' | 'dir' | 'other'; size: number }
 
 declare module 'claude-code' {
   interface PluginState {

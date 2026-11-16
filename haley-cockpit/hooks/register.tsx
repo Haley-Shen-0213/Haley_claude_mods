@@ -19,6 +19,7 @@ import type {
 import { noteAgentEnd, refreshAgents, registerAgents } from './agents'
 import { refreshTree, registerTree } from './filetree'
 import { refreshReads, registerReads } from './reads'
+import { startupUpdate } from './update'
 import {
   EMPTY, ago, bar, clockText, cockpitDir, count, fetchOnce, fit, level, merge, right, runCli, shortPath, span, spark, stallMinutes, toolName,
 } from './helpers'
@@ -74,7 +75,7 @@ async function claudeRate($: Dollar): Promise<string | null> {
 async function refreshBoard($: Dollar, options: PluginOptions): Promise<void> {
   const args = ['board', '--stall-minutes', String(stallMinutes(options))]
   const rate = await claudeRate($)
-  if (rate) args.push('--claude-rate', rate)
+  if (rate) args.push('--claude-rate', rate, '--claude-session', await $.session.id())
   const r = await fetchOnce('board', () => runCli<CockpitBoard>($, options, args))
   if (r) await update($, boardState, merge(r, await $.clock.now()))
 }
@@ -315,6 +316,7 @@ export const register: Register = (on, options) => {
       const key = keyOf(pane.id)
       if (key) void startFor($, key, options)
     }
+    void startupUpdate($, options, $.plugin.root).catch(err => $.ui.log(`haley-cockpit：自動更新檢查出錯：${String(err)}`, { to: 'debug' }))
     return next(e)
   })
 
