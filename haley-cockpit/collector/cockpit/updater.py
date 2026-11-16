@@ -129,8 +129,8 @@ def write_launcher(root):
     return True
 
 
-def startup(root, check, now_ts=None):
-    """mod 載入時呼叫：改寫狀態列啟動程式；市集安裝且 check 時查新版（一小時內用上次結果）。"""
+def startup(root, check, now_ts=None, force=False):
+    """mod 載入時呼叫：改寫狀態列啟動程式；市集安裝且 check 時查新版（一小時內用上次結果；force 時一定重查）。"""
     now_ts = now_ts or common.now()
     kind, market = install_kind(root)
     st = read_state()
@@ -142,7 +142,7 @@ def startup(root, check, now_ts=None):
         out["error"] = f"寫狀態列啟動程式失敗：{err}"
     if kind != "marketplace" or not check:
         return out
-    if now_ts - (st.get("checkedAt") or 0) < CHECK_EVERY and st.get("marketplace") == market:
+    if not force and now_ts - (st.get("checkedAt") or 0) < CHECK_EVERY and st.get("marketplace") == market:
         latest = st.get("latest")
     else:
         rc, _, err = _run(["plugin", "marketplace", "update", market])
@@ -156,6 +156,33 @@ def startup(root, check, now_ts=None):
     out["latest"] = latest
     out["available"] = bool(latest and out["installed"] and version_key(latest) > version_key(out["installed"]))
     return out
+
+
+def version_info(root, check_now=False, now_ts=None):
+    """/cockpit-version（v1.3.1）：目前版本、安裝方式、上次查到的市集最新版與查詢時間。
+    不加 check_now 只讀本機紀錄、不執行任何 claude 指令；加了且是市集安裝時，馬上向市集查一次（不受一小時限制）。"""
+    now_ts = now_ts or common.now()
+    kind, market = install_kind(root)
+    out = {"kind": kind, "marketplace": market, "installed": plugin_version(root), "latest": None, "available": False,
+           "checkedAt": None, "checkedNow": False, "error": None, "now": now_ts, "tzOffset": _tz_offset(now_ts)}
+    if kind != "marketplace":
+        return out
+    if check_now:
+        r = startup(root, True, now_ts=now_ts, force=True)
+        out["error"] = r["error"]
+        out["checkedNow"] = True
+    st = read_state()
+    if st.get("marketplace") == market:
+        out["latest"] = st.get("latest")
+        out["checkedAt"] = st.get("checkedAt")
+    out["available"] = bool(out["latest"] and out["installed"]
+                            and version_key(out["latest"]) > version_key(out["installed"]))
+    return out
+
+
+def _tz_offset(ts):
+    lt = time.localtime(ts)
+    return lt.tm_gmtoff if lt.tm_gmtoff is not None else -time.timezone
 
 
 def mark_asked():

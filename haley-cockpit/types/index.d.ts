@@ -158,6 +158,19 @@ export type CockpitStartup = {
   error: string | null
 }
 export type CockpitUpdateApply = { ok: boolean; message: string }
+/** cockpit_cli.py version：/cockpit-version（v1.3.1）。 */
+export type CockpitVersion = {
+  kind: 'marketplace' | 'local'
+  marketplace: string | null
+  installed: string | null
+  latest: string | null
+  available: boolean
+  checkedAt: number | null
+  checkedNow: boolean
+  error: string | null
+  now: number
+  tzOffset: number
+}
 
 /** cockpit_cli.py skills：使用者層（user）與入口資料夾層（entry）的 skill（v1.3.0）。 */
 export type CockpitSkill = { name: string; folder: string; description: string; source: 'user' | 'entry' | 'codex'; path: string; error: string | null }

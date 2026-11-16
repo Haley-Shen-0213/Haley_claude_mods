@@ -20,7 +20,7 @@ import { noteAgentEnd, refreshAgents, registerAgents } from './agents'
 import { refreshTree, registerTree } from './filetree'
 import { refreshReads, registerReads } from './reads'
 import { refreshSkills, registerSkills } from './skills'
-import { startupUpdate } from './update'
+import { startupUpdate, versionText } from './update'
 import {
   EMPTY, ago, bar, clockText, cockpitDir, count, fetchOnce, fit, level, liveOptions, merge, right, runCli, shortPath, span, spark, stallMinutes, toolName,
 } from './helpers'
@@ -322,6 +322,7 @@ export const register: Register = (on, options) => {
       { name: 'file-tree', description: '專案檔案樹：展開資料夾、點一下複製路徑（絕對或相對）' },
       { name: 'skill-board', description: '技能清單：使用者層與入口資料夾層的 skills，點一列看描述' },
       { name: 'cockpit-config', description: '選擇 /cockpit 一次要開哪些面板：每個面板一個開關，點一下切換' },
+      { name: 'cockpit-version', description: '版本查詢：目前版本、安裝方式、更新模式、市集最新版；加 check 馬上向市集查', argumentHint: '[check]' },
     ]
     for (const c of commands) {
       try {
@@ -417,6 +418,11 @@ export const register: Register = (on, options) => {
   registerReads(on, options)
   registerTree(on)
   registerSkills(on, options)
+
+  // ---- /cockpit-version：版本查詢（v1.3.1） ----
+  on('command.run', { command: 'cockpit-version' }, async ($, e) => ({
+    text: await versionText($, options, $.plugin.root, /^(check|查詢)$/i.test(e.args.trim())),
+  }))
 
   // ---- /cockpit-config：/cockpit 要開哪些面板（裁定 D9：每個面板一個開關，做成面板） ----
   on('command.run', { command: 'cockpit-config' }, async $ => {

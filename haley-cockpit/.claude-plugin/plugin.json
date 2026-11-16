@@ -1,6 +1,6 @@
 {
   "name": "haley-cockpit",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量（含 Fable 額度）、依編號快速切換 session、子代理與工作流程、編輯熱點、讀取紀錄、回合時間軸、git worktree、專案檔案樹、技能清單",
   "author": { "name": "Haley-Shen-0213", "url": "https://github.com/Haley-Shen-0213" },
   "license": "MIT",

@@ -99,6 +99,9 @@ def main():
     sk = sub.add_parser("skills", help="技能清單：使用者層與入口資料夾層的 SKILL.md 名稱與描述")
     sk.add_argument("--root", required=True, help="入口資料夾（$.session.root()）")
     sk.add_argument("--codex", action="store_true", help="也列 Codex 的 ~/.agents/skills（選配）")
+    ve = sub.add_parser("version", help="版本查詢：目前版本、安裝方式、上次查到的市集最新版；加 --check 馬上向市集查")
+    ve.add_argument("--root", required=True, help="目前載入的外掛根目錄（$.plugin.root）")
+    ve.add_argument("--check", action="store_true")
     sub.add_parser("update-asked", help="記下已詢問過使用者要不要開啟自動更新")
     ua = sub.add_parser("update-apply", help="執行官方 claude plugin update")
     ua.add_argument("--marketplace", required=True)
@@ -110,6 +113,8 @@ def main():
         result = updater.startup(args.root, args.check)
     elif args.cmd == "skills":
         result = skills.collect(args.root, include_codex=args.codex)
+    elif args.cmd == "version":
+        result = updater.version_info(args.root, check_now=args.check)
     elif args.cmd == "update-asked":
         result = updater.mark_asked()
     elif args.cmd == "update-apply":

@@ -27,6 +27,7 @@
 |---|---|
 | `/cockpit` | 一次開啟設定裡勾選的面板（預設全部八個，上方有分頁可切換）；`/cockpit close` 全部關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
 | `/cockpit-config` | 選擇 `/cockpit` 一次要開哪些面板：每個面板一個開關，點一列（或按編號）切換，馬上生效；也可在 `/config` 或桌面版的外掛設定頁切換。個別指令不受影響。 |
+| `/cockpit-version` | 版本查詢：目前版本、安裝方式（市集或從資料夾載入）、更新模式、上次查到的市集最新版與查詢時間；只讀本機紀錄。`/cockpit-version check` 馬上向市集查一次（只限市集安裝，不受一小時一次的限制）。 |
 | `/go` | 列出編號的 session；`/go 3` 或 `/go 名稱` 切到那個 session 的終端機。 |
 | `/session-board` | 帳號用量（Claude 5 小時／7 天、Fable 等模型額度、Codex）與所有 session 的狀態、進度、context 比例；點一列切到該 session 的終端機（VS Code 或 Windows Terminal）。<br><br><img src="docs/acceptance/03-session-board.png" alt="/session-board：帳號用量與 session 清單" width="720"> |
 | `/agent-board` | 子代理與工作流程派出的代理：依階段分組，顯示進度、狀態與已執行時間。<br><br><img src="docs/acceptance/04-agent-board.png" alt="/agent-board：工作流程的代理清單" width="720"> |

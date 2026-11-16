@@ -737,6 +737,38 @@ class Updater(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace"))
         self.assertIn("狀態列 ['--list']", p.stdout.decode("utf-8"))
 
+    def test_version_info_reads_cache_and_check_forces(self):
+        """/cockpit-version：不加 check 只讀紀錄、不執行指令；加 check 一小時內也重查。"""
+        root = os.path.join(self.cache, "haley-claude-mods", "haley-cockpit", "1.3.0")
+        self._plugin(root, "1.3.0")
+        mdir = self._market("1.3.1")
+        listing = json.dumps([{"name": "haley-claude-mods", "installLocation": mdir}])
+        calls = []
+
+        def fake(args):
+            calls.append(args)
+            return (0, listing, "") if args[:3] == ["plugin", "marketplace", "list"] else (0, "", "")
+
+        updater.write_state(checkedAt=1000.0, marketplace="haley-claude-mods", latest="1.3.0")
+        with mock.patch.object(updater, "_run", side_effect=fake):
+            cached = updater.version_info(root, now_ts=1000.0 + 600)
+            fresh = updater.version_info(root, check_now=True, now_ts=1000.0 + 660)
+        self.assertEqual(cached["latest"], "1.3.0")
+        self.assertFalse(cached["available"])
+        self.assertEqual(cached["checkedAt"], 1000.0)
+        self.assertEqual(fresh["latest"], "1.3.1")
+        self.assertTrue(fresh["available"])
+        self.assertTrue(fresh["checkedNow"])
+        self.assertEqual(sum(1 for a in calls if a[:3] == ["plugin", "marketplace", "update"]), 1)
+
+    def test_version_info_local_never_runs_commands(self):
+        root = os.path.join(_DATA, "plugins-local", "haley-cockpit")
+        self._plugin(root, "1.3.1")
+        with mock.patch.object(updater, "_run") as run:
+            out = updater.version_info(root, check_now=True)
+        run.assert_not_called()
+        self.assertEqual((out["kind"], out["installed"]), ("local", "1.3.1"))
+
     def test_apply_rejects_bad_marketplace_name(self):
         with mock.patch.object(updater, "_run") as run:
             self.assertFalse(updater.apply("a b; rm")["ok"])

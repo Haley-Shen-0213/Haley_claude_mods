@@ -6,8 +6,8 @@
 // - 每次載入都改寫狀態列啟動程式（~\.claude\haley-cockpit\statusline_launcher.py），指向目前的版本。
 import type { PluginOptions } from 'claude-code'
 
-import type { CockpitStartup, CockpitUpdateApply } from '../types'
-import { runCli } from './helpers'
+import type { CockpitStartup, CockpitUpdateApply, CockpitVersion } from '../types'
+import { ago, clockText, liveOptions, runCli } from './helpers'
 import type { Dollar } from './helpers'
 
 export const UPDATE_MODES = ['不問不做', '可選', '全自動'] as const
@@ -56,6 +56,32 @@ async function applyUpdate($: Dollar, options: PluginOptions, s: CockpitStartup,
     return
   }
   $.ui.toast(`haley-cockpit 已更新到 ${s.latest}；執行 /reload-plugins 或重開 session 後生效。`, { timeoutMs: 10000 })
+}
+
+/** /cockpit-version（v1.3.1）：版本查詢。check：馬上向市集查一次（只限市集安裝，不受一小時限制）。 */
+export async function versionText($: Dollar, options: PluginOptions, root: string, check: boolean): Promise<string> {
+  const r = await runCli<CockpitVersion>($, options, ['version', '--root', root, ...(check ? ['--check'] : [])], root)
+  if (!('data' in r)) return `版本查詢失敗：${r.error}`
+  const v = r.data
+  const mode = updateMode(await liveOptions($, options))
+  const lines = [`haley-cockpit ${v.installed ?? '（讀不到版本）'}`]
+  if (v.kind !== 'marketplace') {
+    lines.push('安裝方式：從資料夾載入（手動部署），不檢查更新；要更新請更新該資料夾的內容。')
+    return lines.join('\n')
+  }
+  lines.push(`安裝方式：市集 ${v.marketplace}`, `更新模式：${mode}`)
+  if (v.error) lines.push(`查詢市集失敗：${v.error}`)
+  if (v.latest && v.checkedAt) {
+    const when = `${clockText(v.checkedAt, v.tzOffset)}，${ago(v.now - v.checkedAt)}`
+    lines.push(`市集最新版：${v.latest}（${v.checkedNow ? '剛剛查詢' : `上次查詢 ${when}`}）`)
+    lines.push(v.available
+      ? `有新版本。${mode === '不問不做' ? '更新模式是不問不做，' : ''}可執行 claude plugin update haley-cockpit@${v.marketplace}，或開新 session 依更新模式處理。`
+      : '已是最新版。')
+  } else if (!v.error) {
+    lines.push('還沒向市集查過；輸入 /cockpit-version check 馬上查。')
+  }
+  if (!check) lines.push('（輸入 /cockpit-version check 會馬上向市集查一次，不受一小時一次的限制。）')
+  return lines.join('\n')
 }
 
 /** session.start 時在背景執行，不擋開場。root：外掛根目錄（$.plugin.root）。 */

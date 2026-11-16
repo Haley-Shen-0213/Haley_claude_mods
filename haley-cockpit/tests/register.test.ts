@@ -136,10 +136,12 @@ type Calls = {
   agents: unknown
   /** 假的資料夾內容，鍵是資料夾路徑 */
   listing: Record<string, Entry[]>
+  /** 假的 `version` 子命令輸出（/cockpit-version）；--check 時 checkedNow 自動設為 true */
+  version: Record<string, unknown>
 }
 
 function newCalls(): Calls {
-  return { argv: [], writes: [], opened: [], closed: [], copied: [], ps: '', agents: NO_AGENTS, listing: {} }
+  return { argv: [], writes: [], opened: [], closed: [], copied: [], ps: '', agents: NO_AGENTS, listing: {}, version: {} }
 }
 
 function ran(exitCode: number, stdout: string, stderr = '') {
@@ -272,6 +274,7 @@ function world(on: On, calls: Calls): void {
     if (e.argv.includes('edits')) return ran(0, JSON.stringify({ now: NOW_S, tzOffset: 28800, files: [], total: 0 }))
     if (e.argv.includes('reads')) return ran(0, JSON.stringify(READS))
     if (e.argv.includes('skills')) return ran(0, JSON.stringify(SKILLS))
+    if (e.argv.includes('version')) return ran(0, JSON.stringify({ ...calls.version, checkedNow: e.argv.includes('--check') }))
     if (e.argv.includes('turns')) return ran(0, JSON.stringify({ now: NOW_S, tzOffset: 28800, turns: [] }))
     if (e.argv[0] === 'git') return ran(0, PORCELAIN)
     if (e.argv[0] === 'powershell') return ran(0, calls.ps)
@@ -480,6 +483,33 @@ test('技能清單：設定打開「也列 Codex 的 skills」才帶 --codex', a
   calls.argv.length = 0
   await $.command.run(cmd('skill-board'))
   expect(calls.argv.find(a => a.includes('skills')) ?? []).toContain('--codex')
+})
+
+test('/cockpit-version：顯示版本、安裝方式、更新模式與上次查到的最新版；check 才帶 --check', { options: { updateMode: '可選' } }, async ($, on) => {
+  const calls = newCalls()
+  calls.version = { kind: 'marketplace', marketplace: 'haley-claude-mods', installed: '1.3.0', latest: '1.3.1', available: true, checkedAt: NOW_S - 600, error: null, now: NOW_S, tzOffset: 28800 }
+  world(on, calls)
+  const out = await $.command.run(cmd('cockpit-version'))
+  const text = out.text ?? ''
+  expect(text).toContain('haley-cockpit 1.3.0')
+  expect(text).toContain('市集 haley-claude-mods')
+  expect(text).toContain('更新模式：可選')
+  expect(text).toContain('市集最新版：1.3.1（上次查詢')
+  expect(text).toContain('10 分前')
+  expect(text).toContain('有新版本')
+  expect(calls.argv.find(a => a.includes('version')) ?? []).not.toContain('--check')
+  const checked = await $.command.run(cmd('cockpit-version', 'check'))
+  expect(checked.text ?? '').toContain('剛剛查詢')
+  expect(calls.argv.filter(a => a.includes('version')).pop() ?? []).toContain('--check')
+})
+
+test('/cockpit-version：從資料夾載入時說明不檢查更新', async ($, on) => {
+  const calls = newCalls()
+  calls.version = { kind: 'local', marketplace: null, installed: '1.3.1', latest: null, available: false, checkedAt: null, error: null, now: NOW_S, tzOffset: 28800 }
+  world(on, calls)
+  const out = await $.command.run(cmd('cockpit-version'))
+  expect(out.text ?? '').toContain('haley-cockpit 1.3.1')
+  expect(out.text ?? '').toContain('從資料夾載入')
 })
 
 test('讀取紀錄面板：列出開場載入、Read 涵蓋行數、推測讀檔與搜尋次數，窄面板不換行', async ($, on) => {
