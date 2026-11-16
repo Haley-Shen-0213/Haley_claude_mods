@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-from cockpit import board, claude_sessions, common, updater, usage, usage_fetch, workflows
+from cockpit import board, claude_sessions, common, skills, updater, usage, usage_fetch, workflows
 from cockpit.winproc import Processes
 
 
@@ -96,6 +96,9 @@ def main():
     su = sub.add_parser("startup", help="mod 載入時：改寫狀態列啟動程式；市集安裝且加 --check 時查新版")
     su.add_argument("--root", required=True, help="目前載入的外掛根目錄（$.plugin.root）")
     su.add_argument("--check", action="store_true")
+    sk = sub.add_parser("skills", help="技能清單：使用者層與入口資料夾層的 SKILL.md 名稱與描述")
+    sk.add_argument("--root", required=True, help="入口資料夾（$.session.root()）")
+    sk.add_argument("--codex", action="store_true", help="也列 Codex 的 ~/.agents/skills（選配）")
     sub.add_parser("update-asked", help="記下已詢問過使用者要不要開啟自動更新")
     ua = sub.add_parser("update-apply", help="執行官方 claude plugin update")
     ua.add_argument("--marketplace", required=True)
@@ -105,6 +108,8 @@ def main():
         return
     if args.cmd == "startup":
         result = updater.startup(args.root, args.check)
+    elif args.cmd == "skills":
+        result = skills.collect(args.root, include_codex=args.codex)
     elif args.cmd == "update-asked":
         result = updater.mark_asked()
     elif args.cmd == "update-apply":

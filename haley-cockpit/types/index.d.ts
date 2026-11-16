@@ -159,6 +159,10 @@ export type CockpitStartup = {
 }
 export type CockpitUpdateApply = { ok: boolean; message: string }
 
+/** cockpit_cli.py skills：使用者層（user）與入口資料夾層（entry）的 skill（v1.3.0）。 */
+export type CockpitSkill = { name: string; folder: string; description: string; source: 'user' | 'entry' | 'codex'; path: string; error: string | null }
+export type CockpitSkills = { now: number; userDir: string; entryDir: string | null; codexDir: string | null; skills: CockpitSkill[] }
+
 export type CockpitTreeEntry ={ name: string; kind: 'file' | 'dir' | 'other'; size: number }
 
 declare module 'claude-code' {
@@ -181,6 +185,9 @@ declare module 'claude-code' {
       treeHidden: boolean
       treeNotice: string | null
       treeError: string | null
+      skills: CockpitLoad<CockpitSkills>
+      skillOpen: string[]
+      configNotice: string | null
     }
   }
 }

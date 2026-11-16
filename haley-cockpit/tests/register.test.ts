@@ -70,6 +70,18 @@ const PORCELAIN = [
   'worktree D:/work/alpha-review', 'HEAD abcdef1234567890', 'branch refs/heads/feature/x', 'locked 正在審查', '',
 ].join('\n')
 
+const SKILLS = {
+  now: NOW_S,
+  userDir: 'C:\\Users\\tester\\.claude\\skills',
+  entryDir: 'D:\\work\\alpha\\.claude\\skills',
+  codexDir: null,
+  skills: [
+    { name: 'explain', folder: 'explain', description: '解釋系統怎麼運作', source: 'user', path: 'x', error: null },
+    { name: 'recall', folder: 'recall', description: '接續主題前重建現況：已裁定的事、試過沒成功的做法', source: 'user', path: 'x', error: null },
+    { name: 'deploy', folder: 'deploy', description: '', source: 'entry', path: 'x', error: null },
+  ],
+}
+
 const NO_AGENTS = { now: NOW_S, tzOffset: 28800, runs: [] as unknown[] }
 
 const RUNS = {
@@ -154,7 +166,7 @@ function updateWorld(on: On, startup: Record<string, unknown>) {
   })
   on('config.set', ($, e) => {
     seen.configSets.push({ key: e.key, value: e.value })
-    return { value: { value: e.value } }
+    return { value: e.value }
   })
   on('process.run', ($, e) => {
     seen.argv.push([...e.argv])
@@ -259,6 +271,7 @@ function world(on: On, calls: Calls): void {
     if (e.argv.includes('agents')) return ran(0, JSON.stringify(calls.agents))
     if (e.argv.includes('edits')) return ran(0, JSON.stringify({ now: NOW_S, tzOffset: 28800, files: [], total: 0 }))
     if (e.argv.includes('reads')) return ran(0, JSON.stringify(READS))
+    if (e.argv.includes('skills')) return ran(0, JSON.stringify(SKILLS))
     if (e.argv.includes('turns')) return ran(0, JSON.stringify({ now: NOW_S, tzOffset: 28800, turns: [] }))
     if (e.argv[0] === 'git') return ran(0, PORCELAIN)
     if (e.argv[0] === 'powershell') return ran(0, calls.ps)
@@ -372,16 +385,101 @@ test('/go：不帶參數列出編號，依編號或名稱切換，並處理各�
   expect((await $.command.run(cmd('go', '3'))).text ?? '').toContain('切換失敗')
 })
 
+const ALL_PANES = ['agent-board', 'edit-heatmap', 'file-tree', 'read-map', 'session-board', 'skill-board', 'turn-timeline', 'worktree-map']
+
 test('/cockpit 一次開啟全部面板，close 全部關閉', async ($, on) => {
   const calls = newCalls()
   world(on, calls)
   const out = await $.command.run(cmd('cockpit'))
-  expect(out.text ?? '').toContain('已開啟 7 個面板')
-  expect(out.text ?? '').toContain('讀取紀錄')
-  expect([...calls.opened].sort()).toEqual(['agent-board', 'edit-heatmap', 'file-tree', 'read-map', 'session-board', 'turn-timeline', 'worktree-map'])
+  expect(out.text ?? '').toContain('已開啟 8 個面板')
+  expect(out.text ?? '').toContain('技能清單')
+  expect([...calls.opened].sort()).toEqual(ALL_PANES)
   const closed = await $.command.run(cmd('cockpit', 'close'))
   expect(closed.text ?? '').toContain('已關閉全部')
-  expect([...calls.closed].sort()).toEqual(['agent-board', 'edit-heatmap', 'file-tree', 'read-map', 'session-board', 'turn-timeline', 'worktree-map'])
+  expect([...calls.closed].sort()).toEqual(ALL_PANES)
+})
+
+test('/cockpit 只開設定裡勾選的面板；close 仍然全部關閉', { options: { cockpitEdits: false, cockpitReads: false, cockpitTurns: false, cockpitWorktrees: false, cockpitTree: false, cockpitSkills: false } }, async ($, on) => {
+  const calls = newCalls()
+  world(on, calls)
+  const out = await $.command.run(cmd('cockpit'))
+  expect(out.text ?? '').toContain('已開啟 2 個面板')
+  expect([...calls.opened].sort()).toEqual(['agent-board', 'session-board'])
+  await $.command.run(cmd('cockpit', 'close'))
+  expect([...calls.closed].sort()).toEqual(ALL_PANES)
+})
+
+test('/cockpit 全部面板都不勾時提示，不開任何面板', { options: { cockpitBoard: false, cockpitAgents: false, cockpitEdits: false, cockpitReads: false, cockpitTurns: false, cockpitWorktrees: false, cockpitTree: false, cockpitSkills: false } }, async ($, on) => {
+  const calls = newCalls()
+  world(on, calls)
+  const out = await $.command.run(cmd('cockpit'))
+  expect(out.text ?? '').toContain('沒有勾選任何面板')
+  expect(calls.opened).toEqual([])
+})
+
+test('技能清單：分使用者層與入口資料夾列出，點一列展開描述、再點收合', async ($, on) => {
+  const calls = newCalls()
+  world(on, calls)
+  await $.command.run(cmd('skill-board'))
+  expect(calls.argv.some(a => a.includes('skills') && a.includes('D:\\work\\alpha'))).toBe(true)
+  const ui = await $.ui.mount({ plugin: 'haley-cockpit', surface: 'terminal', component: 'Pane', requestId: 'skill-board', props: paneProps('技能清單') })
+  expect(await ui.find({ type: 'Text', text: /使用者層 2 個/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /入口資料夾 1 個/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /接續主題前重建現況/ })).toBeUndefined()
+  await ui.press({ key: 'skill:user:recall' })
+  expect(await ui.find({ type: 'Text', text: /接續主題前重建現況/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /（沒有描述）/ })).toBeUndefined()
+  await ui.press({ key: 'skill:entry:deploy' })
+  expect(await ui.find({ type: 'Text', text: /（沒有描述）/ })).toBeDefined()
+  await ui.press({ key: 'skill:user:recall' })
+  expect(await ui.find({ type: 'Text', text: /接續主題前重建現況/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/cockpit-config：列出八個面板開關，點一列寫回設定；/cockpit 依現在的設定值開面板', async ($, on) => {
+  const calls = newCalls()
+  world(on, calls)
+  const stored: Record<string, boolean> = { 'haley-cockpit.cockpitTree': false }
+  const sets: { key: string; value: unknown }[] = []
+  on('config.list', () => ({
+    value: Object.entries(stored).map(([key, value]) => ({ key, label: key, kind: 'boolean' as const, value, provider: { kind: 'plugin' as const, name: 'haley-cockpit' }, isLocked: false })),
+  }))
+  on('config.set', ($, e) => {
+    sets.push({ key: e.key, value: e.value })
+    stored[e.key] = e.value as boolean
+    return { value: e.value }
+  })
+  const out = await $.command.run(cmd('cockpit-config'))
+  expect(out.text ?? '').toContain('/cockpit 面板設定')
+  expect(calls.opened).toContain('cockpit-config')
+  const ui = await $.ui.mount({ plugin: 'haley-cockpit', surface: 'terminal', component: 'Pane', requestId: 'cockpit-config', props: paneProps('/cockpit 面板設定') })
+  expect(await ui.find({ type: 'Text', text: /已選 7／8/ })).toBeDefined()
+  expect(textOf(await ui.find({ key: 'cfg:tree' }))).toContain('[ ] 專案檔案樹')
+  expect(textOf(await ui.find({ key: 'cfg:board' }))).toContain('[✔] Session 總覽')
+  await ui.press({ key: 'cfg:skills' })
+  expect(sets).toEqual([{ key: 'haley-cockpit.cockpitSkills', value: false }])
+  await ui.press({ key: 'cfg:tree' })
+  expect(sets[1]).toEqual({ key: 'haley-cockpit.cockpitTree', value: true })
+  await ui.unmount()
+  calls.opened.length = 0
+  await $.command.run(cmd('cockpit'))
+  expect(calls.opened).not.toContain('skill-board')
+  expect(calls.opened).toContain('file-tree')
+})
+
+test('技能清單：設定打開「也列 Codex 的 skills」才帶 --codex', async ($, on) => {
+  const calls = newCalls()
+  world(on, calls)
+  let codex = false
+  on('config.list', () => ({
+    value: [{ key: 'haley-cockpit.skillsCodex', label: 'x', kind: 'boolean' as const, value: codex, provider: { kind: 'plugin' as const, name: 'haley-cockpit' }, isLocked: false }],
+  }))
+  await $.command.run(cmd('skill-board'))
+  expect(calls.argv.find(a => a.includes('skills')) ?? []).not.toContain('--codex')
+  codex = true
+  calls.argv.length = 0
+  await $.command.run(cmd('skill-board'))
+  expect(calls.argv.find(a => a.includes('skills')) ?? []).toContain('--codex')
 })
 
 test('讀取紀錄面板：列出開場載入、Read 涵蓋行數、推測讀檔與搜尋次數，窄面板不換行', async ($, on) => {

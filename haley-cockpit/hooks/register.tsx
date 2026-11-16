@@ -1,6 +1,6 @@
 // 路徑： hooks\register.tsx
-// haley-cockpit 駕駛艙：/session-board、/edit-heatmap、/read-map、/agent-board、/turn-timeline、/worktree-map、/file-tree 七個面板，
-// /cockpit 一次開啟全部，/go 依編號或名稱切到某個 session；同一個 mod 共用讀取程式與設定。
+// haley-cockpit 駕駛艙：/session-board、/edit-heatmap、/read-map、/agent-board、/turn-timeline、/worktree-map、/file-tree、/skill-board 八個面板，
+// /cockpit 一次開啟設定裡勾選的面板（預設全部），/go 依編號或名稱切到某個 session；同一個 mod 共用讀取程式與設定。
 // session 紀錄檔交給 collector\cockpit_cli.py 解析：mod 的環境一次只能讀 4 MiB，紀錄檔動輒十幾 MB；狀態列也用同一份 Python 程式，兩邊數字一致。
 // 子代理與工作流程的面板在 agents.tsx，讀取紀錄在 reads.tsx，檔案樹在 filetree.tsx；共用的排版與呼叫收集程式的函式在 helpers.ts。
 import { atom, read, update } from 'claude-code'
@@ -19,9 +19,10 @@ import type {
 import { noteAgentEnd, refreshAgents, registerAgents } from './agents'
 import { refreshTree, registerTree } from './filetree'
 import { refreshReads, registerReads } from './reads'
+import { refreshSkills, registerSkills } from './skills'
 import { startupUpdate } from './update'
 import {
-  EMPTY, ago, bar, clockText, cockpitDir, count, fetchOnce, fit, level, merge, right, runCli, shortPath, span, spark, stallMinutes, toolName,
+  EMPTY, ago, bar, clockText, cockpitDir, count, fetchOnce, fit, level, liveOptions, merge, right, runCli, shortPath, span, spark, stallMinutes, toolName,
 } from './helpers'
 import type { Dollar } from './helpers'
 
@@ -39,8 +40,21 @@ const PANES = {
   turns: { id: 'turn-timeline', title: '回合時間軸' },
   worktrees: { id: 'worktree-map', title: 'Worktree' },
   tree: { id: 'file-tree', title: '專案檔案樹' },
+  skills: { id: 'skill-board', title: '技能清單' },
 } as const
 type PaneKey = keyof typeof PANES
+
+/** /cockpit 要開哪些面板：plugin.json 的 userConfig 每個面板一個開關，預設全開（v1.3.0，裁定 D9 A）。 */
+const COCKPIT_OPTION: Record<PaneKey, string> = {
+  board: 'cockpitBoard', agents: 'cockpitAgents', edits: 'cockpitEdits', reads: 'cockpitReads',
+  turns: 'cockpitTurns', worktrees: 'cockpitWorktrees', tree: 'cockpitTree', skills: 'cockpitSkills',
+}
+
+const CONFIG_PANE = { id: 'cockpit-config', title: '/cockpit 面板設定' } as const
+
+function cockpitKeys(options: PluginOptions): PaneKey[] {
+  return (Object.keys(PANES) as PaneKey[]).filter(k => options[COCKPIT_OPTION[k]] !== false)
+}
 
 const boardState = atom({ plugin: 'haley-cockpit', key: 'board' } as const, EMPTY as CockpitLoad<CockpitBoard>)
 const editsState = atom({ plugin: 'haley-cockpit', key: 'edits' } as const, EMPTY as CockpitLoad<CockpitEdits>)
@@ -48,6 +62,7 @@ const editsAll = atom({ plugin: 'haley-cockpit', key: 'editsAll' } as const, fal
 const turnsState = atom({ plugin: 'haley-cockpit', key: 'turns' } as const, EMPTY as CockpitLoad<CockpitTurns>)
 const worktreeState = atom({ plugin: 'haley-cockpit', key: 'worktrees' } as const, EMPTY as CockpitLoad<CockpitWorktrees>)
 const noticeState = atom({ plugin: 'haley-cockpit', key: 'notice' } as const, null as string | null)
+const configNotice = atom({ plugin: 'haley-cockpit', key: 'configNotice' } as const, null as string | null)
 
 // 模組變數在熱重載時會清空（計時器也一併被引擎取消），所以 session.start 會依引擎記錄中仍開著的面板補回
 const timers = new Map<PaneKey, Timer>()
@@ -264,6 +279,7 @@ function startFor($: Dollar, key: PaneKey, options: PluginOptions): Promise<void
   // 子代理清單的「已執行時間」每次重畫才會走動，所以資料沒變也要定期重畫
   if (key === 'agents') return schedule($, key, AGENT_MS, async () => { await refreshAgents($, options); $.ui.invalidate('ui.render') })
   if (key === 'tree') return schedule($, key, TREE_MS, () => refreshTree($))
+  if (key === 'skills') return refreshSkills($, options) // skills 很少變，開面板讀一次，要更新按 r
   return refreshWorktrees($)
 }
 
@@ -295,7 +311,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     // 逐個登記並各自攔錯：萬一某個名稱和內建指令撞名而被拒絕，不能連累其他指令與整個 session.start
     const commands: { name: string; description: string; argumentHint?: string }[] = [
-      { name: 'cockpit', description: '一次開啟全部駕駛艙面板（Session 總覽、代理、編輯熱點、讀取紀錄、回合時間軸、Worktree、專案檔案樹）；加 close 全部關閉', argumentHint: '[close]' },
+      { name: 'cockpit', description: '一次開啟駕駛艙面板（開哪些可在 /config 設定，預設全部八個）；加 close 全部關閉', argumentHint: '[close]' },
       { name: 'go', description: '依編號或名稱切到某個 session 的終端機；不帶參數時列出編號', argumentHint: '[編號或名稱]' },
       { name: 'session-board', description: '所有 Claude／Codex session 的狀態、進度與帳號用量（每 5 秒更新；點一列切到該終端機）' },
       { name: 'agent-board', description: '本 session 的子代理與工作流程派出的代理：階段、描述、狀態、已執行時間' },
@@ -304,6 +320,8 @@ export const register: Register = (on, options) => {
       { name: 'turn-timeline', description: '本 session 每回合的耗時、輸出 token、API 呼叫與工具次數' },
       { name: 'worktree-map', description: '目前 repo 的 git worktree：路徑、分支、鎖定狀態' },
       { name: 'file-tree', description: '專案檔案樹：展開資料夾、點一下複製路徑（絕對或相對）' },
+      { name: 'skill-board', description: '技能清單：使用者層與入口資料夾層的 skills，點一列看描述' },
+      { name: 'cockpit-config', description: '選擇 /cockpit 一次要開哪些面板：每個面板一個開關，點一下切換' },
     ]
     for (const c of commands) {
       try {
@@ -322,22 +340,24 @@ export const register: Register = (on, options) => {
 
   const single: [string, PaneKey][] = [
     ['session-board', 'board'], ['agent-board', 'agents'], ['edit-heatmap', 'edits'], ['read-map', 'reads'],
-    ['turn-timeline', 'turns'], ['worktree-map', 'worktrees'], ['file-tree', 'tree'],
+    ['turn-timeline', 'turns'], ['worktree-map', 'worktrees'], ['file-tree', 'tree'], ['skill-board', 'skills'],
   ]
   for (const [command, key] of single) {
     on('command.run', { command }, async $ => ({ text: (await openPane($, key, options)).text }))
   }
 
   on('command.run', { command: 'cockpit' }, async ($, e) => {
-    const keys = Object.keys(PANES) as PaneKey[]
     if (/^(close|關閉)$/i.test(e.args.trim())) {
-      for (const key of keys) {
+      // 關閉一律關全部，不管設定裡勾了哪些（可能是個別指令開的）
+      for (const key of Object.keys(PANES) as PaneKey[]) {
         await $.ui.close({ id: PANES[key].id })
         timers.get(key)?.cancel()
         timers.delete(key)
       }
       return { text: '已關閉全部駕駛艙面板。' }
     }
+    const keys = cockpitKeys(await liveOptions($, options))
+    if (keys.length === 0) return { text: '設定裡沒有勾選任何面板；用 /cockpit-config 選擇要開哪些。' }
     const results = await Promise.all(keys.map(key => openPane($, key, options)))
     const waiting = results.filter(r => !r.placed).length
     return {
@@ -396,6 +416,43 @@ export const register: Register = (on, options) => {
   registerAgents(on, options)
   registerReads(on, options)
   registerTree(on)
+  registerSkills(on, options)
+
+  // ---- /cockpit-config：/cockpit 要開哪些面板（裁定 D9：每個面板一個開關，做成面板） ----
+  on('command.run', { command: 'cockpit-config' }, async $ => {
+    const opened = await $.ui.open({ id: CONFIG_PANE.id, title: CONFIG_PANE.title })
+    return { text: opened.isPlaced ? '已開啟「/cockpit 面板設定」：點一列切換開或關。' : `「/cockpit 面板設定」等待版面空間：${opened.reason}` }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: CONFIG_PANE.id }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const live = await liveOptions($, options)
+    const keys = Object.keys(PANES) as PaneKey[]
+    const on_ = cockpitKeys(live)
+    const toggle = async (key: PaneKey) => {
+      const field = COCKPIT_OPTION[key]
+      try {
+        const r = await $.config.set({ key: `haley-cockpit.${field}`, value: !on_.includes(key) })
+        await update($, configNotice, () => (r.deny ? `沒有改成：${r.deny}` : null))
+      } catch (err) {
+        await update($, configNotice, () => `寫入設定失敗：${err instanceof Error ? err.message : String(err)}`)
+      }
+      $.ui.invalidate('ui.render')
+    }
+    const notice = await read($, configNotice)
+    return (
+      <Box flexDirection="column">
+        <Text weight="bold">{`/cockpit 一次開啟的面板（已選 ${on_.length}／${keys.length}）`}</Text>
+        {keys.map((key, i) => (
+          <Button key={`cfg:${key}`} plain hotkey={String(i + 1)} onPress={() => void toggle(key)}>
+            <Text color={on_.includes(key) ? 'success' : 'subtle'}>{`${on_.includes(key) ? '[✔]' : '[ ]'} ${PANES[key].title}（/${PANES[key].id}）`}</Text>
+          </Button>
+        ))}
+        <Text dimColor>{'\n點一列（或按編號）切換；設定存在 Claude Code 的外掛設定，/config 與桌面版設定頁也看得到。個別指令不受影響。'}</Text>
+        {notice ? <Text color="warning">{notice}</Text> : null}
+      </Box>
+    )
+  })
 
   // ---- /session-board ----
   on('ui.render', { component: 'Pane', requestId: 'session-board' }, async ($, e) => {

@@ -1,7 +1,7 @@
 {
   "name": "haley-cockpit",
-  "version": "1.2.0",
-  "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量（含 Fable 額度）、依編號快速切換 session、子代理與工作流程、編輯熱點、讀取紀錄、回合時間軸、git worktree、專案檔案樹",
+  "version": "1.3.0",
+  "description": "駕駛艙：所有 Claude／Codex session 總覽與帳號用量（含 Fable 額度）、依編號快速切換 session、子代理與工作流程、編輯熱點、讀取紀錄、回合時間軸、git worktree、專案檔案樹、技能清單",
   "author": { "name": "Haley-Shen-0213", "url": "https://github.com/Haley-Shen-0213" },
   "license": "MIT",
   "repository": "https://github.com/Haley-Shen-0213/Haley_claude_mods",
@@ -25,6 +25,15 @@
       "description": "從市集安裝時，開啟 mod 是否檢查新版：不問不做＝不檢查；可選＝有新版先問；全自動＝有新版直接更新（/reload-plugins 或重開後生效）。從資料夾載入時不檢查",
       "options": ["不問不做", "可選", "全自動"],
       "default": "不問不做"
-    }
+    },
+    "skillsCodex": { "type": "boolean", "title": "技能清單：也列 Codex 的 skills", "description": "打開時 /skill-board 另外列出 ~/.agents/skills（Codex 用）；預設只列使用者層與入口資料夾層", "default": false },
+    "cockpitBoard": { "type": "boolean", "title": "/cockpit 開啟：Session 總覽", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /session-board 不受影響", "default": true },
+    "cockpitAgents": { "type": "boolean", "title": "/cockpit 開啟：代理與工作流程", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /agent-board 不受影響", "default": true },
+    "cockpitEdits": { "type": "boolean", "title": "/cockpit 開啟：編輯熱點", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /edit-heatmap 不受影響", "default": true },
+    "cockpitReads": { "type": "boolean", "title": "/cockpit 開啟：讀取紀錄", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /read-map 不受影響", "default": true },
+    "cockpitTurns": { "type": "boolean", "title": "/cockpit 開啟：回合時間軸", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /turn-timeline 不受影響", "default": true },
+    "cockpitWorktrees": { "type": "boolean", "title": "/cockpit 開啟：Worktree", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /worktree-map 不受影響", "default": true },
+    "cockpitTree": { "type": "boolean", "title": "/cockpit 開啟：專案檔案樹", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /file-tree 不受影響", "default": true },
+    "cockpitSkills": { "type": "boolean", "title": "/cockpit 開啟：技能清單", "description": "輸入 /cockpit 時是否開啟這個面板；個別指令 /skill-board 不受影響", "default": true }
   }
 }

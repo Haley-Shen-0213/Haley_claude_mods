@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from unittest import mock  # noqa: E402
 
 import statusline  # noqa: E402
-from cockpit import board, claude_sessions, codex_sessions, common, updater, usage, usage_fetch, winproc, workflows  # noqa: E402
+from cockpit import board, claude_sessions, codex_sessions, common, skills, updater, usage, usage_fetch, winproc, workflows  # noqa: E402
 
 
 def tearDownModule():
@@ -741,6 +741,51 @@ class Updater(unittest.TestCase):
         with mock.patch.object(updater, "_run") as run:
             self.assertFalse(updater.apply("a b; rm")["ok"])
         run.assert_not_called()
+
+
+class Skills(unittest.TestCase):
+    """v1.3.0 技能清單：只讀使用者層、入口資料夾層（Codex 層選配）的 SKILL.md 開頭欄位。"""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(dir=_DATA)
+
+    def _skill(self, folder, name, text):
+        d = os.path.join(folder, name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_parse_head_variants(self):
+        self.assertEqual(skills.parse_head("---\nname: recall\ndescription: 接續主題\n---\n本文"), {"name": "recall", "description": "接續主題"})
+        self.assertEqual(skills.parse_head('---\nname: "q"\ndescription: \'引號: 冒號\'\n---\n'), {"name": "q", "description": "引號: 冒號"})
+        self.assertEqual(skills.parse_head("---\nname: m\ndescription: >\n  第一行\n  第二行\nother: x\n---\n")["description"], "第一行 第二行")
+        self.assertEqual(skills.parse_head("沒有開頭欄位"), {})
+        self.assertEqual(skills.parse_head("---\nname: 沒有結尾\n"), {})
+
+    def test_only_user_and_entry_layers(self):
+        """預設只列兩層；沒有 SKILL.md 的資料夾不列；Codex 層要明確打開。"""
+        home = os.path.join(self.base, "home")
+        user = os.path.join(home, ".claude", "skills")
+        entry_root = os.path.join(self.base, "proj")
+        self._skill(user, "recall", "---\nname: recall\ndescription: 重建現況\n---\n")
+        os.makedirs(os.path.join(user, "synced"))  # 沒有 SKILL.md
+        self._skill(os.path.join(entry_root, ".claude", "skills"), "deploy", "---\nname: deploy\n---\n")
+        self._skill(os.path.join(home, ".agents", "skills"), "cx-a", "---\nname: cx-a\ndescription: Codex 用\n---\n")
+        with mock.patch.object(common, "CLAUDE_DIR", os.path.join(home, ".claude")), \
+                mock.patch.object(os.path, "expanduser", lambda p: home if p == "~" else p):
+            out = skills.collect(entry_root)
+            with_cx = skills.collect(entry_root, include_codex=True)
+        self.assertEqual([(s["source"], s["name"]) for s in out["skills"]], [("user", "recall"), ("entry", "deploy")])
+        self.assertIsNone(out["codexDir"])
+        self.assertEqual(out["skills"][1]["description"], "")
+        self.assertEqual([s["source"] for s in with_cx["skills"]], ["user", "entry", "codex"])
+
+    def test_entry_same_as_user_not_listed_twice(self):
+        home = os.path.join(self.base, "home2")
+        self._skill(os.path.join(home, ".claude", "skills"), "a", "---\nname: a\n---\n")
+        with mock.patch.object(common, "CLAUDE_DIR", os.path.join(home, ".claude")):
+            out = skills.collect(home)
+        self.assertEqual(len(out["skills"]), 1)
 
 
 if __name__ == "__main__":

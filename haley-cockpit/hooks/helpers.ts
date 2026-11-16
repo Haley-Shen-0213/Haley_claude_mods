@@ -131,6 +131,19 @@ export function pythonCommand(options: PluginOptions): string {
   return typeof v === 'string' && v.trim() ? v.trim() : 'python'
 }
 
+/** 本外掛現在的設定值：register 收到的 options 是載入時的值，/cockpit-config 或 /config 改過之後要從 $.config.list() 讀；讀不到時用載入時的值。 */
+export async function liveOptions($: Dollar, options: PluginOptions): Promise<PluginOptions> {
+  try {
+    const out: Record<string, PluginOptions[string]> = { ...options }
+    for (const row of await $.config.list()) {
+      if (row.key.startsWith('haley-cockpit.')) out[row.key.slice('haley-cockpit.'.length)] = row.value
+    }
+    return out
+  } catch {
+    return options
+  }
+}
+
 export function stallMinutes(options: PluginOptions): number {
   const v = options['stallMinutes']
   return typeof v === 'number' && v > 0 ? v : 10

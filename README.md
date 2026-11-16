@@ -25,7 +25,8 @@
 
 | 指令 | 面板內容 |
 |---|---|
-| `/cockpit` | 一次開啟全部七個面板（上方有分頁可切換）；`/cockpit close` 全部關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
+| `/cockpit` | 一次開啟設定裡勾選的面板（預設全部八個，上方有分頁可切換）；`/cockpit close` 全部關閉。<br><br><img src="docs/acceptance/01-cockpit.png" alt="/cockpit 的輸出：已開啟 6 個面板" width="720"> |
+| `/cockpit-config` | 選擇 `/cockpit` 一次要開哪些面板：每個面板一個開關，點一列（或按編號）切換，馬上生效；也可在 `/config` 或桌面版的外掛設定頁切換。個別指令不受影響。 |
 | `/go` | 列出編號的 session；`/go 3` 或 `/go 名稱` 切到那個 session 的終端機。 |
 | `/session-board` | 帳號用量（Claude 5 小時／7 天、Fable 等模型額度、Codex）與所有 session 的狀態、進度、context 比例；點一列切到該 session 的終端機（VS Code 或 Windows Terminal）。<br><br><img src="docs/acceptance/03-session-board.png" alt="/session-board：帳號用量與 session 清單" width="720"> |
 | `/agent-board` | 子代理與工作流程派出的代理：依階段分組，顯示進度、狀態與已執行時間。<br><br><img src="docs/acceptance/04-agent-board.png" alt="/agent-board：工作流程的代理清單" width="720"> |
@@ -34,6 +35,7 @@
 | `/turn-timeline` | 本 session 每個回合的耗時、輸出 token、API 呼叫與工具次數。<br><br><img src="docs/acceptance/06-turn-timeline.png" alt="/turn-timeline：回合時間軸" width="720"> |
 | `/worktree-map` | 目前 repo 的 git worktree、分支與 HEAD，標出本 session 所在的那一個。<br><br><img src="docs/acceptance/07-worktree-map.png" alt="/worktree-map：git worktree 對照" width="720"> |
 | `/file-tree` | 專案檔案樹：點資料夾展開，點檔名或「複製」複製路徑（絕對或相對）。<br><br><img src="docs/acceptance/02-file-tree.png" alt="/file-tree：專案檔案樹" width="720"> |
+| `/skill-board` | 技能清單：列出使用者層（`~/.claude/skills`）與入口資料夾層（開 session 的資料夾底下 `.claude/skills`）的 skills，點一列展開或收合描述。設定打開「技能清單：也列 Codex 的 skills」時，另外列出 `~/.agents/skills`（預設關）。 |
 
 狀態列（選用，`haley-cockpit/collector/statusline.py`）：
 
@@ -95,6 +97,8 @@ claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_m
 - `stallMinutes`：停滯門檻（分鐘），預設 10；狀態列也讀這個值。
 - `python`：執行收集程式用的 Python，預設 `python`；不在 PATH 上時填完整路徑。
 - `updateMode`（更新模式）：`不問不做`（預設）、`可選`、`全自動`。見下方〈自動更新〉。
+- `skillsCodex`（技能清單：也列 Codex 的 skills）：預設關。
+- `cockpitBoard`、`cockpitAgents`、`cockpitEdits`、`cockpitReads`、`cockpitTurns`、`cockpitWorktrees`、`cockpitTree`、`cockpitSkills`（/cockpit 開啟：各面板）：預設全開；用 `/cockpit-config` 切換最方便。
 
 **自動更新（v1.2.0 起，只對方法一）**：
 
@@ -103,6 +107,9 @@ claude plugin install haley-cockpit --marketplace Haley-Shen-0213/Haley_claude_m
 - 查新版與更新都是執行官方的 `claude plugin marketplace update`、`claude plugin update`，同一台電腦一小時內只查一次。
 - 用方法二（從資料夾載入）時不檢查更新，請自己更新資料夾內容。
 - Claude Code 本身也有市集的自動更新開關（`/plugin` → Marketplaces，第三方市集預設關，開了不會先問）；兩者擇一使用即可。
+- Claude 桌面版：在「設定 → 外掛程式 → Haley cockpit → 設定」分頁也能切換更新模式。
+
+<img src="docs/acceptance/08-update-mode.png" alt="Claude 桌面版的外掛設定：Haley cockpit 1.2.0 來自 haley-claude-mods，更新模式三選一" width="720">
 
 **狀態列（選用）**：先開啟一次 Claude Code 讓 mod 載入（v1.2.0 起，mod 每次載入都會在 `~/.claude/haley-cockpit/statusline_launcher.py` 寫一支啟動程式，指向目前載入的版本），再在 `~/.claude/settings.json` 加入下面這段，`C:/Users/你的帳號` 換成你的使用者資料夾並使用正斜線（Windows 上 Claude Code 會經 Git Bash 執行這個指令）：
 
@@ -139,6 +146,7 @@ code --install-extension <上一步印出的 .vsix 路徑>
 - `~/.codex/sessions/**/rollout-*.jsonl`、`~/.codex/session_index.jsonl`：Codex 的紀錄與標題
 - Windows 的程序清單：程序編號、父程序、執行檔名、啟動時間
 - 專案資料夾的檔名與檔案大小（`/file-tree` 展開時才讀，只列名稱，不讀檔案內容）
+- `~/.claude/skills/*/SKILL.md`、`<入口資料夾>/.claude/skills/*/SKILL.md`（打開選配時加上 `~/.agents/skills/*/SKILL.md`）：`/skill-board` 只讀開頭 `---` 之間的 `name`、`description`，不讀本文與其他檔案
 - Windows Terminal 視窗的分頁名稱（UI Automation，只在你點選切換時）
 
 會寫入（全部在 `~/.claude/haley-cockpit/`）：
@@ -154,7 +162,7 @@ code --install-extension <上一步印出的 .vsix 路徑>
 - `update.json`：自動更新的狀態（是否問過、上次查詢時間與查到的版本）
 - `statusline-error.log`：狀態列出錯時的錯誤訊息
 
-除此之外，本工具自己不連網（背景查詢 Fable 額度、查新版與更新時執行的都是官方 `claude` 程式，見免責聲明第 4 點），也不修改任何 session 紀錄檔或專案檔案。唯一會改的設定：第一次詢問自動更新時選了「可選」或「全自動」，會透過 Claude Code 的設定介面把本外掛的「更新模式」改成你選的值。
+除此之外，本工具自己不連網（背景查詢 Fable 額度、查新版與更新時執行的都是官方 `claude` 程式，見免責聲明第 4 點），也不修改任何 session 紀錄檔或專案檔案。會改的設定只有本外掛自己的欄位，都透過 Claude Code 的設定介面：第一次詢問自動更新時選了「可選」或「全自動」，會把「更新模式」改成你選的值；在 `/cockpit-config` 點選時，改的是對應的「/cockpit 開啟：…」開關。
 
 ### 移除
 
